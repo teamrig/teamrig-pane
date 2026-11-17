@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join, relative, resolve, sep } from 'node:path';
 import { EXIT_CLEAN, EXIT_FINDINGS } from '../lib/exit.ts';
 import { runMain } from '../lib/run-main.ts';
+import { TSC } from '../lib/tsc.ts';
 import { ARCHIVE_NAME, archiveText, sha256Of } from './archive.ts';
 import { builtArchive, outOf, versionOf } from './build.ts';
 import { SPEAKS } from '../../plugins/teamrig-pane/hooks/interface.ts';
@@ -30,7 +31,7 @@ async function main(): Promise<number> {
   try {
     const tsc = spawnSync(
       process.execPath,
-      [join(root, 'node_modules', 'typescript', 'bin', 'tsc'), '-p', 'tsconfig.ui.json', '--outDir', emit],
+      [TSC, '-p', 'tsconfig.ui.json', '--outDir', emit],
       { cwd: root, encoding: 'utf8' },
     );
     // A `tsc` that could not start has no exit code, and is told the same way.

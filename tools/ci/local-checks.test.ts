@@ -4,6 +4,7 @@ import { readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { FakeGit } from '../lib/fake-git.ts';
 import { isRecord } from '../lib/guards.ts';
+import { TSC } from '../lib/tsc.ts';
 import { DEFAULT_BASE, localChecks, prePushChecks, TEAMRIG_CONFIG_KEY, teamrigCheckout } from './local-checks.ts';
 
 const read = (path: string): string => readFileSync(new URL(`../../${path}`, import.meta.url), 'utf8');
@@ -43,7 +44,7 @@ describe('localChecks', () => {
       const script = /^node (?:--\S+ )*(\S+\.ts)/.exec(command)?.[1];
       const tsc = /^tsc -p (\S+)$/.exec(command)?.[1];
       if (script !== undefined) assert.ok(checks.some((check) => check.argv.includes(script)), `no local check runs ${script}`);
-      else if (tsc !== undefined) assert.ok(checks.some((check) => check.argv.join(' ') === `node node_modules/typescript/bin/tsc -p ${tsc}`), `no local check runs tsc -p ${tsc}`);
+      else if (tsc !== undefined) assert.ok(checks.some((check) => check.argv.join(' ') === `node ${TSC} -p ${tsc}`), `no local check runs tsc -p ${tsc}`);
       else if (command === 'npm test') assert.ok(checks.some((check) => check.argv.join(' ') === 'node tools/ci/coverage-cli.ts'), 'the coverage gate runs the tests');
       else assert.fail(`CI runs \`${command}\`, which no local check covers: add it to local-checks.ts`);
     }
