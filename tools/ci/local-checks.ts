@@ -1,9 +1,7 @@
 import { join, resolve } from 'node:path';
 import type { Git } from '../lib/git.ts';
+import { TSC } from '../lib/tsc.ts';
 import type { LocalCheck } from './local-gate.ts';
-
-/** TypeScript's compiler, run by this Node (npm cannot be spawned without a shell on Windows). */
-const TSC = 'node_modules/typescript/bin/tsc';
 
 /** The base the commit checks compare with when `--base` is not given. */
 export const DEFAULT_BASE = 'origin/main';
