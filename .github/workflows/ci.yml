@@ -89,7 +89,7 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
         with:
-          node-version: 22
+          node-version: 24
       - run: npm ci --ignore-scripts
       - run: node tools/ci/coverage-cli.ts
 
@@ -114,7 +114,7 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
         with:
-          node-version: 22
+          node-version: 24
       - run: node --disable-warning=ExperimentalWarning scripts/sync-core.ts --teamrig ../../teamrig-src --check
         working-directory: plugins/teamrig-pane
       - run: node --disable-warning=ExperimentalWarning scripts/sync-core.ts --teamrig ../../teamrig-src --formats
@@ -123,13 +123,13 @@ jobs:
   test:
     name: test (${{ matrix.os }}, node ${{ matrix.node }})
     # Each run tests all three OSes, since paths, renames and process launch differ by OS (macOS minutes
-    # bill at 10x, Windows at 2x). Node 22 only, to ease the shared free GitHub runners.
+    # bill at 10x, Windows at 2x). Node 24 only, to ease the shared free GitHub runners.
     if: ${{ !github.event.repository.private }}
     strategy:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest, macos-latest]
-        node: [22]
+        node: [24]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 20
     steps:
