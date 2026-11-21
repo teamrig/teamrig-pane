@@ -2329,9 +2329,9 @@ test("the Teams tab reads nothing while another view shows and starts no read of
   readRuns.length = 0
   disk.write(`${TEAMS}/tools/config.json`, [JSON.stringify({ ...TOOLS_CONFIG, sessions: ['boss', 'dev'] })])
   await clock.advance(POLL_MS)
-  // The task list's read of the tree's other registers (tree-registers.ts) reads the changed config once on its own
-  // poll, as its plan order needs them whatever view shows; a Teams tab read while hidden would read it a second time.
-  expect(teamReads()).toEqual([`${TEAMS}/tools/config.json`])
+  // The task list reads no other team's files either: its plan order comes from teamrig's plan, which holds what the
+  // tree's other registers decide, so a changed config of another team is read by nothing while the tab is hidden.
+  expect(teamReads()).toEqual([])
   expect(readRuns).toEqual([])
 
   // Shown again, the tab reads the changed config once more, for where that team's week file is (team-weeks.ts), and

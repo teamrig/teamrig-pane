@@ -76,8 +76,6 @@ import { headOf, headRows, pressOfBar, type HeadButton, type HeadItem, type Head
 import { RefFileReader } from './ref-file'
 import { TaskRegisterSource, registerPaths, unlessMissing, type Files, type RegisterPaths } from './source'
 import { TreeGoals } from './tree-goals'
-import { TreeRegisters } from './tree-registers'
-import { NO_ELSEWHERE } from './elsewhere'
 import { WrapCache, dockLayout, type CardPart, type Drawn } from './layout'
 import { diffKey, noteKey, pieceKey, placeOf, pressesFrom, standInsOf } from './press-keys'
 import { buttonCells } from './pack'
@@ -529,8 +527,7 @@ export const register: Register = on => {
       list: path => unlessMissing(() => $.fs.list(path), () => $.fs.exists(path), null),
       read: path => $.fs.read(path),
     }
-    // The folders right under a folder: the kit home's teams, for the tree's other registers, the Teams tab's weeks
-    // and Stats. A missing folder lists none (source.ts unlessMissing).
+    // The folders right under a folder: the kit home's teams, for the Teams tab's weeks and Stats. A missing folder lists none (source.ts unlessMissing).
     const folders = async (path: string): Promise<string[]> => {
       const entries = await unlessMissing(() => $.fs.list(path), () => $.fs.exists(path), null)
       return entries === null ? [] : entries.filter(entry => entry.kind === 'dir').map(entry => entry.name)
@@ -557,7 +554,7 @@ export const register: Register = on => {
         const paths = registerPaths(places.dirs)
         const { team } = places
         const documents = new DocumentSource(
-          new TaskRegisterSource(files, paths, places.settings, team, new TreeGoals(files, paths.goals, team), new TreeRegisters(files, team, folders)),
+          new TaskRegisterSource(files, paths, places.settings, team, new TreeGoals(files, paths.goals, team)),
           cli,
           { run: (argv, timeoutMs) => run(argv, { cwd: e.cwd, timeoutMs }) },
         )

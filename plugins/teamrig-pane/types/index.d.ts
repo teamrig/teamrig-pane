@@ -112,13 +112,6 @@ export type TaskRow = {
 export type TaskItem = { readonly tracker: string; readonly id: string; readonly url: string | null }
 
 /**
- * A task another register of the team tree holds (one numbering across the tree), with that register's team: what
- * teamrig's TaskTree reads a need the pane's own tasks lack from (core register/tree.ts TaskElsewhere). Its task is
- * teamrig's folded task, plain data, so it crosses `$.state` as it is.
- */
-export type TaskElsewhere = { readonly team: string; readonly task: import('../hooks/core/read/index').Task }
-
-/**
  * How the pane knows this session's area: pinned by /teamrig-pane, or its newest `inbox read` mark, which teamrig's
  * prompt hook also writes when it binds a tab by its Claude Code title.
  */
@@ -219,12 +212,6 @@ export type Snapshot = {
   ownerCards: Readonly<Record<string, SessionOwnerCards>>
   /** Each session's tasks counted, as the register last folded (hooks/task-counts.ts): recounted when it moves. */
   taskCounts: TaskCounts
-  /**
-   * The tasks the team tree's other registers hold that the snapshot's tasks are judged by, in task order
-   * (hooks/elsewhere.ts): those they need and the active ones that need them, as the last poll found them. Plan order
-   * holds an own task back behind one, as `teamrig list` does. Empty with no team or a team in no tree.
-   */
-  elsewhere: readonly TaskElsewhere[]
   /**
    * teamrig's plan document as last read (hooks/plan-document.ts): the active tasks in plan order with the answers
    * teamrig's own tree gives of each. Null before a read, from the file fold alone, and from a teamrig that serves

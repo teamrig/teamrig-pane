@@ -355,7 +355,6 @@ describe('DocumentSource: what it draws', () => {
     expect(snapshot.goals).toBe(BASE.goals)
     expect(snapshot.spend).toBe(BASE.spend)
     expect(snapshot.taskCounts).toBe(BASE.taskCounts)
-    expect(snapshot.elsewhere).toBe(BASE.elsewhere)
     expect(snapshot.now).toBe(NOW + 5)
   })
 

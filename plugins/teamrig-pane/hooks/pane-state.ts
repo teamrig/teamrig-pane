@@ -54,7 +54,6 @@ export const EMPTY_SNAPSHOT: Snapshot = {
   spend: NO_SPEND,
   ownerCards: {},
   taskCounts: NO_TASK_COUNTS,
-  elsewhere: [],
   plan: null,
   now: 0,
 }
