@@ -1,11 +1,14 @@
 // The fake teamrig the whole-pane specs read through (tests/fake-read.ts): that each document it prints from a
 // register's files is one the pane's own readers take whole, saying what the pane's fold of those files says; whom
-// it serves an inbox; what a held revision answers; and what it refuses, a run at a time (T4742).
+// it serves an inbox; what a held revision answers; what it refuses, a run at a time (T4742); and that its plan is
+// the pane's own tree of the fold, served as interface 1.1 does (T4759).
 import { describe, expect, test } from 'claude-code/testing'
 import { configOf } from '../hooks/config-document'
 import type { BodyRead } from '../hooks/document-fields'
 import { inboxOf } from '../hooks/inbox-document'
+import { treeOf } from '../hooks/meta'
 import { findPlaces } from '../hooks/places'
+import { planOf } from '../hooks/plan-document'
 import { readAnswer, type DocumentName, type ReadDocument } from '../hooks/read-document'
 import { sessionsOf } from '../hooks/sessions-document'
 import { registerPaths, TaskRegisterSource } from '../hooks/source'
@@ -13,7 +16,7 @@ import { tasksOf } from '../hooks/tasks-document'
 import type { CliRun } from '../hooks/teamrig-cli'
 import type { Snapshot } from '../types'
 import { fakeRead, type FakeDisk } from './fake-read'
-import { HOUR, INBOX_LINES, MemoryFiles, NO_TREE_GOALS, NOW, S1, S2, TEAM_SETTINGS, createLine, iso, markLine, statusLine } from './fixtures'
+import { HOUR, INBOX_LINES, MemoryFiles, NO_TREE_GOALS, NOW, S1, S2, TEAM_SETTINGS, createLine, iso, markLine, statusLine, waitingLine } from './fixtures'
 import { hire, retire } from './team-fixtures'
 
 const HOME = '/Homes/tester'
@@ -240,11 +243,87 @@ describe('the fake teamrig read', () => {
   test('refuses a run that asks no document, or one it does not serve', async () => {
     const { disk } = teamDisk()
     const teamrig = fakeRead(disk, () => NOW)
-    const refusal = { exitCode: 2, stdout: '', stderr: 'REFUSED read serves tasks, inbox, sessions, config', isStdoutTruncated: false }
+    const refusal = { exitCode: 2, stdout: '', stderr: 'REFUSED read serves tasks, inbox, sessions, config, plan', isStdoutTruncated: false }
     expect(await teamrig(words('tasks goals'))).toEqual(refusal)
-    // Interface 1.1's document, which the pane knows by name: a 1.0 teamrig refuses the run it is asked in.
-    expect(await teamrig(words('tasks plan'))).toEqual(refusal)
     expect(await teamrig(['read', '--json'])).toEqual(refusal)
+  })
+
+  test("serves the plan as interface 1.1 does: the active tasks in the pane's own plan order, the finished ones by their class", async () => {
+    const { files, disk } = teamDisk()
+    files.write(
+      PATHS.events,
+      [
+        ...EVENTS,
+        createLine('T3', { at: NOW - 2 * HOUR, by: 'lead', owner: 'api' }),
+        statusLine('T3', 'api', NOW - HOUR, 'done'),
+        createLine('T4', { at: NOW - 2 * HOUR, by: 'lead', owner: 'ui', priority: 1, due: '2026-10-20' }),
+      ].join('\n'),
+    )
+    const run = await fakeRead(disk, () => NOW)(words('tasks plan', '--conversation', S1))
+    const document = documentOf(run, 'plan')
+    expect([document.interface, 'cuts' in document.fields]).toEqual([{ major: 1, minor: 1 }, false])
+    const plan = readOf(run, 'plan', planOf)
+    const fold = await foldOf(files, null)
+    const tree = treeOf(fold)
+    const active = tree.inPlanOrder(fold.tasks.filter(task => task.status !== 'done'))
+    expect(active.length).toBe(3)
+    expect(plan.at).toBe(NOW)
+    expect(plan.week).toBe(tree.week)
+    expect(plan.tasks.map(task => task.id)).toEqual(active.map(task => task.id))
+    expect(plan.tasks.map(task => [task.id, task.started, task.parked, task.ready])).toEqual(active.map(task => [task.id, task.status === 'in-progress', false, true]))
+    expect(plan.tasks.map(task => [task.score, task.workClass])).toEqual(active.map(task => [tree.rankedOf(task)?.score, tree.rankedOf(task)?.workClass]))
+    expect(plan.tasks.find(task => task.id === 'T4')?.due).toEqual({ due: '2026-10-20', at: tree.dueTime({ id: 'T4', due: '2026-10-20' }), from: null })
+    expect(plan.tasks.find(task => task.id === 'T1')?.next).toEqual({ kind: 'work', who: 'po', task: 'T1', behind: null })
+    const finished = fold.tasks.filter(task => task.status === 'done')
+    expect(finished.map(task => task.id)).toEqual(['T3'])
+    expect(plan.finished).toEqual(finished.map(task => ({ id: task.id, workClass: tree.rankedOf(task)?.workClass })))
+  })
+
+  test('serves what a task needs, who needs it and who moves next, a need no register holds as a finished one', async () => {
+    const { files, disk } = teamDisk()
+    files.write(
+      PATHS.events,
+      [...EVENTS, waitingLine('T2', 'api', NOW - HOUR, [{ kind: 'task', id: 'T1' }, { kind: 'task', id: 'T99' }, { kind: 'time', at: '2026-10-13 16:00' }])].join('\n'),
+    )
+    const plan = readOf(await fakeRead(disk, () => NOW)(words('plan')), 'plan', planOf)
+    const [t1, t2] = ['T1', 'T2'].map(id => plan.tasks.find(task => task.id === id))
+    expect(t2?.ready).toBe(false)
+    expect(t2?.needs).toEqual([
+      { id: 'T1', team: null, owner: 'po', status: 'in-progress' },
+      { id: 'T99', team: null, owner: null, status: null },
+    ])
+    expect(t2?.next).toEqual({ kind: 'work', who: 'po', task: 'T1', behind: null })
+    expect(t1?.neededBy).toEqual([{ id: 'T2', owner: 'api', due: null }])
+    expect(t1?.unblocks).toEqual({ first: 'T2', priority: 3, count: 1 })
+    // The time T2 waits until is the first moment an answer turns with no file moving.
+    expect(plan.validUntil).toBe(NOW + 2 * HOUR)
+  })
+
+  test('serves the time a waiting task comes back to its owner, as a moment', async () => {
+    const { files, disk } = teamDisk()
+    files.write(PATHS.events, [...EVENTS, waitingLine('T2', 'api', NOW - HOUR, [{ kind: 'time', at: '2026-10-13 16:00' }])].join('\n'))
+    const plan = readOf(await fakeRead(disk, () => NOW)(words('plan')), 'plan', planOf)
+    expect(plan.tasks.find(task => task.id === 'T2')?.next).toEqual({ kind: 'time', who: 'api', task: 'T2', behind: null, at: NOW + 2 * HOUR })
+  })
+
+  test('answers a held plan revision with unchanged while only the clock moved, and serves it again once the register did', async () => {
+    const { files, disk } = teamDisk()
+    let now = NOW
+    const teamrig = fakeRead(disk, () => now)
+    const revision = documentOf(await teamrig(words('plan')), 'plan').revision
+    now = NOW + HOUR
+    const later = documentOf(await teamrig(words('plan', '--unless', `plan=${revision}`)), 'plan')
+    expect([later.isUnchanged, later.revision, later.interface]).toEqual([true, revision, { major: 1, minor: 1 }])
+    files.write(PATHS.events, [...EVENTS, statusLine('T2', 'api', NOW, 'in-progress')].join('\n'))
+    const moved = await teamrig(words('plan', '--unless', `plan=${revision}`))
+    expect(documentOf(moved, 'plan').isUnchanged).toBe(false)
+    expect(readOf(moved, 'plan', planOf).at).toBe(NOW + HOUR)
+  })
+
+  test('refuses the plan where there is no team, as every document but config', async () => {
+    const files = new MemoryFiles()
+    const run = await fakeRead(diskOf(files, '/elsewhere'), () => NOW)(words('config plan'))
+    expect(run).toEqual({ exitCode: 2, stdout: '', stderr: 'REFUSED no team here: plan needs one', isStdoutTruncated: false })
   })
 
   test("refuses every document of a team whose config is missing or cannot be read, and tells the pane's own problem", async () => {
