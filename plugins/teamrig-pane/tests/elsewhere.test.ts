@@ -131,6 +131,16 @@ describe("TaskRegisterSource with the tree's other registers", () => {
     expect(moved?.elsewhere.map(({ task }) => task.status)).toEqual(['done'])
   })
 
+  test("a move of a task an own task needs is a served document's: the plan judges the own task by it", async () => {
+    const elsewhere = new SetElsewhere()
+    elsewhere.set(heldBy('web', [T20]))
+    const { source } = sourceOver([OWN_AFTER_T20], elsewhere)
+    const at = { claudeSession: S1, pinned: null, now: NOW }
+    await source.pollFiles(at)
+    elsewhere.set(heldBy('web', [T20, statusLine('T20', 'ui', NOW, 'done')]))
+    expect((await source.pollFiles(at))?.isServedMoved).toBe(true)
+  })
+
   test('picks again when an own task comes to need a task of another register, though that register did not move', async () => {
     const elsewhere = new SetElsewhere()
     elsewhere.set(heldBy('web', [T20, T22]))

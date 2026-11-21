@@ -291,8 +291,10 @@ export type FilePoll = {
   readonly snapshot: Snapshot
   /**
    * True when a file teamrig builds a served document from moved (the register, the config or the rename log, the
-   * area's inbox, the read marks) or the area changed. False for a move of the numbers alone (spend, which the
-   * budget hooks write on every session's turn, the goals' ranks, the other teams' registers) and for a bare `force`.
+   * area's inbox, the read marks, and for the plan the goals' ranks and the tasks of the tree's other registers the
+   * team's are judged by) or the area changed. False for a bare `force` and for a move of spend alone: the budget
+   * hooks write it on every session's turn, and a run for each would be a `node` start every open pane pays, for a
+   * score a metered size moves by little.
    */
   readonly isServedMoved: boolean
 }
@@ -402,7 +404,7 @@ export class TaskRegisterSource {
     const mark = area === null ? undefined : byArea.get(area)
     const lines = this.inbox?.current ?? []
     const unread = area !== null && mark !== undefined ? unreadOf(area, lines, mark, lineHash) : null
-    const isServedMoved = registerChanged || marksChanged || areaChanged || inboxChanged || namesChanged
+    const isServedMoved = registerChanged || goalsChanged || elsewhereChanged || marksChanged || areaChanged || inboxChanged || namesChanged
     const snapshot: Snapshot = {
       tasks: this.tasks,
       area,
@@ -420,6 +422,7 @@ export class TaskRegisterSource {
       ownerCards: this.ownerCards,
       taskCounts: this.taskCounts,
       elsewhere: this.needed,
+      plan: null,
       now,
     }
     return { snapshot, isServedMoved }

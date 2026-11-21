@@ -12,7 +12,7 @@ import type { BodyRead } from './document-fields'
 import { isHeldFinished } from './done'
 import { inboxShown } from './inbox'
 import { inboxOf, type InboxRead } from './inbox-document'
-import { planOf, type PlanRead } from './plan-document'
+import { planOf } from './plan-document'
 import type { DocumentName, ReadDocument } from './read-document'
 import { readDocuments, type ReadPorts } from './read-port'
 import { nameOf, leadsOf } from './session-roster'
@@ -150,18 +150,12 @@ export class DocumentSource implements SnapshotSource {
     return this.config.value
   }
 
-  /** The plan document last read, which no view draws from so far; null before one is. */
-  get planRead(): PlanRead | null {
-    return this.plan.value
-  }
-
   /**
    * A new snapshot when a file moved, on `force`, or when the documents were read. They are read on `force`, when a
-   * file a served document is built from moved, and each READ_EVERY_MS without a read. A move of the numbers alone
-   * (spend, which the budget hooks write on every session's turn, the ranks, the other teams' registers) is drawn
-   * with the documents held and starts no run: no document a view draws from holds them (the plan does, and is read
-   * within READ_EVERY_MS of such a move), and each run is a `node` start every open pane would pay. A throw of the
-   * file source passes through, as the caller shows it.
+   * file a served document is built from moved, and each READ_EVERY_MS without a read. A move of spend alone, which
+   * the budget hooks write on every session's turn, is drawn with the documents held and starts no run: each run is
+   * a `node` start every open pane would pay, and the plan, whose scores read the metered sizes, is read within
+   * READ_EVERY_MS of such a move. A throw of the file source passes through, as the caller shows it.
    */
   async poll(input: PollInput): Promise<Snapshot | null> {
     const moved = await this.files.pollFiles(input)
@@ -282,6 +276,7 @@ export class DocumentSource implements SnapshotSource {
       ...base,
       ...this.settingsOf(base.team),
       tasks: rows.filter(task => isActive(task) || isHeldFinished(task, now)),
+      plan: this.plan.value,
       area: place.area,
       areaSource: pinned !== null ? 'pinned' : place.area !== null ? 'inbox-read' : null,
       areaName: place.areaName,

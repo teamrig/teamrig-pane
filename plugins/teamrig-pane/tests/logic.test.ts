@@ -11,7 +11,7 @@ import { metaText, treeOf } from '../hooks/meta'
 import { NO_SPEND } from '../hooks/ranking'
 import { barCounts } from '../hooks/status-bar'
 import { cells, graphemes } from '../hooks/width'
-import { MAX_READ_BYTES, TaskRegisterSource, registerPaths, skippedText, unlessMissing, type RegisterPaths } from '../hooks/source'
+import { MAX_READ_BYTES, TaskRegisterSource, registerPaths, skippedText, unlessMissing, type GoalSource, type RegisterPaths } from '../hooks/source'
 import { areaView, MAX_FINISHED, ownerGroups, sameView } from '../hooks/view'
 import { HELD_DAYS } from '../hooks/done'
 import type { TeamFiles } from '../hooks/places'
@@ -404,6 +404,10 @@ describe('view', () => {
     expect(sameView(base, { ...base, focus: { ...base.focus, expedite: { ...base.focus.expedite, ownerP1: false } } })).toBe(false)
     expect(sameView(base, { ...base, goals: { A1: { parent: null, rank: 1, slice: null } } })).toBe(false)
     expect(sameView(base, { ...base, spend: { spentPct: { T1: 0.2 }, likeMedians: [] } })).toBe(false)
+    const plan = { at: NOW, validUntil: null, week: null, tasks: [], finished: [] }
+    expect(sameView(base, { ...base, plan })).toBe(false)
+    expect(sameView({ ...base, plan }, { ...base, plan: { ...plan } })).toBe(true)
+    expect(sameView({ ...base, plan }, { ...base, plan: { ...plan, week: '2026-W42' } })).toBe(false)
     // The Inbox view: a line read 23 hours before leaves its window an hour on, with no poll; one read an hour before
     // prints with its weekday from the zone's midnight.
     const line = { key: 'inbox:0', at: NOW - 23 * HOUR, from: 'lead', text: 'ship it', unread: false }
@@ -1574,6 +1578,26 @@ describe('source', () => {
     files.write(`${PATHS.inboxDir}/po.md`, '- 2026-01-01 00:00 UTC lead: a line\n')
     expect((await source.pollFiles(at))?.isServedMoved).toBe(true)
     expect((await source.pollFiles({ ...at, pinned: 'etl' }))?.isServedMoved).toBe(true)
+  })
+
+  test("pollFiles says a served document's file moved for a goal's rank, which the plan is ordered by", async () => {
+    const files = new MemoryFiles()
+    files.write(PATHS.events, createLine('T1', { owner: 'po', by: 'lead', at: NOW }))
+    let isRankMoved = false
+    const goals: GoalSource = {
+      refresh: async () => {
+        const moved = isRankMoved
+        isRankMoved = false
+        return moved
+      },
+      current: {},
+    }
+    const source = new TaskRegisterSource(files, PATHS, TEAM_SETTINGS, null, goals)
+    const at = { claudeSession: S1, pinned: 'po', now: NOW }
+    await source.pollFiles(at)
+    expect(await source.pollFiles(at)).toBe(null)
+    isRankMoved = true
+    expect((await source.pollFiles(at))?.isServedMoved).toBe(true)
   })
 
   test("each snapshot carries the team config's settings the source was made with: its NOT PICKED UP hours, zone and owner marker", async () => {
