@@ -25,8 +25,8 @@ function problemLines(problems: unknown): string[] {
   return Array.isArray(problems) ? problems.filter(isText).map(shownText) : []
 }
 
-/** The documents the pane asks for, by the name `teamrig read` takes and prints. */
-export const DOCUMENT_NAMES = ['tasks', 'inbox', 'sessions', 'config'] as const
+/** The documents the pane reads, by the name `teamrig read` takes and prints; `plan` is served from interface 1.1. */
+export const DOCUMENT_NAMES = ['tasks', 'inbox', 'sessions', 'config', 'plan'] as const
 export type DocumentName = (typeof DOCUMENT_NAMES)[number]
 
 export function isDocumentName(value: unknown): value is DocumentName {

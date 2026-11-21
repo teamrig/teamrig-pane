@@ -10,7 +10,7 @@
 import { indexMarks, inboxLines, parseConfigText, readHiringLog, readMarks, readRenames, Roster, unreadOf, type KitConfig } from '../hooks/core/read/index'
 import { lineHash } from '../hooks/line-hash'
 import { findPlaces, kitHomeOf, teamIds, teamStateDir, type PlacesInput, type TeamFiles } from '../hooks/places'
-import { DOCUMENT_NAMES, isDocumentName, type DocumentName, type JsonRecord } from '../hooks/read-document'
+import type { DocumentName, JsonRecord } from '../hooks/read-document'
 import { registerPaths, TaskRegisterSource, type Files, type RegisterDirs } from '../hooks/source'
 import type { CliRun } from '../hooks/teamrig-cli'
 import type { Snapshot, TaskRow, TeamSettings } from '../types'
@@ -165,8 +165,17 @@ function inboxSession(team: Team, asker: string | null): string {
   return found.id
 }
 
+/** The documents this fake serves: interface 1.0's, so asking it for `plan` refuses the run as a 1.0 teamrig does. */
+type ServedName = Exclude<DocumentName, 'plan'>
+
+const SERVED_NAMES: readonly ServedName[] = ['tasks', 'inbox', 'sessions', 'config']
+
+function isServedName(value: string): value is ServedName {
+  return SERVED_NAMES.some(name => name === value)
+}
+
 /** What one document of a team says, without its envelope. */
-async function teamBody(name: DocumentName, disk: FakeDisk, team: Team, asked: Asked, now: number): Promise<JsonRecord> {
+async function teamBody(name: ServedName, disk: FakeDisk, team: Team, asked: Asked, now: number): Promise<JsonRecord> {
   switch (name) {
     case 'tasks': {
       const fold = await foldOf(disk, team, null, asked.conversation, now)
@@ -192,7 +201,7 @@ async function teamBody(name: DocumentName, disk: FakeDisk, team: Team, asked: A
 }
 
 /** With no team only the `config` document is served: the machine's teams to join one of; any other refuses the run. */
-async function teamlessBody(name: DocumentName, disk: FakeDisk): Promise<JsonRecord> {
+async function teamlessBody(name: ServedName, disk: FakeDisk): Promise<JsonRecord> {
   if (name !== 'config') throw new Refusal(`no team here: ${name} needs one`)
   const kit = kitHomeOf(disk.env, disk.home)
   const teams = kit === null ? [] : teamIds(await disk.folders(`${kit}/teams`))
@@ -210,15 +219,15 @@ function heldOf(unless: string | null): ReadonlyMap<string, string> {
 }
 
 /** The document as it is printed: `unchanged` alone when the asker holds its revision, else the body in its envelope. */
-function enveloped(name: DocumentName, body: JsonRecord, held: string | undefined): JsonRecord {
+function enveloped(name: ServedName, body: JsonRecord, held: string | undefined): JsonRecord {
   const revision = lineHash(JSON.stringify(body))
   if (held === revision) return { interface: '1.0', document: name, revision, unchanged: true }
   return { interface: '1.0', document: name, revision, problems: [], ...body, cuts: [] }
 }
 
 async function answer(disk: FakeDisk, asked: Asked, now: number): Promise<CliRun> {
-  const names = asked.documents.filter(isDocumentName)
-  if (names.length === 0 || names.length !== asked.documents.length) throw new Refusal(`read serves ${DOCUMENT_NAMES.join(', ')}`)
+  const names = asked.documents.filter(isServedName)
+  if (names.length === 0 || names.length !== asked.documents.length) throw new Refusal(`read serves ${SERVED_NAMES.join(', ')}`)
   const places = await findPlaces(disk)
   if (places.kind === 'problem') throw new Refusal(places.problem)
   const team = places.kind === 'found' && places.team !== null ? await teamOf(disk, places.team, places.dirs, places.settings) : null
