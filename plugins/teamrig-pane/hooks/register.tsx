@@ -66,7 +66,7 @@ import {
 import type { PaneKey, PaneStore } from './pane-store'
 import { screenOf } from './screen'
 import { openConversation, showMode, switchView, type MoveFocus, type ViewLives } from './steps'
-import { findPlaces, type Places, type PlacesEnv } from './places'
+import { findPlaces, kitHomeOf, teamIds, type Places, type PlacesEnv } from './places'
 import { lookupSession, type SessionFound } from './session-roster'
 import type { SessionsRead } from './sessions-document'
 import { TaskDetails, type RefPlaces } from './details'
@@ -776,9 +776,19 @@ export const register: Register = on => {
     copying = copiesLive
     diffing = diffsLive
     tracked = changesLive
-    const findHere = () => findPlaces({ env, files, folders, home: home ?? null, cwd: e.cwd, machineZone })
+    const findHere = () => findPlaces({ env, files, home: home ?? null, cwd: e.cwd, machineZone })
     const places = await findHere()
     if (places.kind === 'unset') {
+      // The teams to join one of: the kit home's folders named as teamrig names a team. One it cannot list lists
+      // none, as the list only offers a team to join and the rest of the setup still shows.
+      const kit = kitHomeOf(env, home ?? null)
+      const kitTeams = async (): Promise<readonly string[]> => {
+        try {
+          return kit === null ? [] : teamIds(await folders(`${kit}/teams`))
+        } catch {
+          return []
+        }
+      }
       // Nothing to read until a team or a register is named here: the tasks view shows how to set the project up,
       // and the watch looks again at each poll and binds the register it finds.
       live = null
@@ -801,12 +811,13 @@ export const register: Register = on => {
       const watching = new SetupWatch(
         {
           find: findHere,
+          teams: kitTeams,
           show: async shown => {
             await update($, setup, () => shown)
           },
           bind,
         },
-        places.setup,
+        { project: places.project, teams: await kitTeams() },
       )
       watch = watching
       await watching.show()

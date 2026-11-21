@@ -8,6 +8,8 @@ import { SetupWatch, type FoundPlaces, type SetupPorts } from '../hooks/setup'
 import type { ProjectSetup, SetupView } from '../types'
 
 const SETUP: ProjectSetup = { project: 'C:/w/app', teams: [] }
+/** The places of the project of SETUP, which teamrig is not set up for. */
+const UNSET: Places = { kind: 'unset', project: 'C:/w/app' }
 const FOUND: FoundPlaces = {
   kind: 'found',
   dirs: { tasksDir: 'C:/Homes/a/.teamrig/teams/web/state', inboxDir: 'C:/Homes/a/.teamrig/teams/web/inbox' },
@@ -24,11 +26,13 @@ const FOUND: FoundPlaces = {
 }
 
 /**
- * Ports over a look's answer the test sets (an error to reject with), a write and a bind that fail while told to;
- * `calls` lists each port call in order, `shown` each view written, `bound` each places bound.
+ * Ports over a look's answer the test sets (an error to reject with), the machine's teams it sets (none at first),
+ * a write and a bind that fail while told to; `calls` lists each port call in order but the teams asked, `shown` each
+ * view written, `bound` each places bound.
  */
 function fakePorts(first: Places | Error) {
   let answer = first
+  let teams: readonly string[] = []
   let isShowFailing = false
   let isBindFailing = false
   const calls: string[] = []
@@ -40,6 +44,7 @@ function fakePorts(first: Places | Error) {
       if (answer instanceof Error) throw answer
       return answer
     },
+    teams: async () => teams,
     show: async view => {
       calls.push(view === null ? 'clear' : 'show')
       if (isShowFailing) throw new Error('store is down')
@@ -58,6 +63,9 @@ function fakePorts(first: Places | Error) {
     bound,
     answer: (next: Places | Error) => {
       answer = next
+    },
+    listTeams: (next: readonly string[]) => {
+      teams = next
     },
     failShows: (isFailing: boolean) => {
       isShowFailing = isFailing
@@ -85,7 +93,7 @@ function timersOf(watch: SetupWatch) {
 
 describe('SetupWatch', () => {
   test('writes the setup it starts with, and looks again every POLL_MS until it stops', async () => {
-    const fake = fakePorts({ kind: 'unset', setup: SETUP })
+    const fake = fakePorts(UNSET)
     const watch = new SetupWatch(fake.ports, SETUP)
     await watch.show()
     expect(fake.shown).toEqual([{ setup: SETUP, problem: null }])
@@ -97,16 +105,22 @@ describe('SetupWatch', () => {
   })
 
   test('a look that finds the project still not set up writes only a change: a team made on the machine lists it', async () => {
-    const fake = fakePorts({ kind: 'unset', setup: SETUP })
+    const fake = fakePorts(UNSET)
     const watch = new SetupWatch(fake.ports, SETUP)
     await watch.show()
     await watch.look()
     expect(fake.shown.length).toBe(1)
 
-    const withTeam: ProjectSetup = { ...SETUP, teams: ['web'] }
-    fake.answer({ kind: 'unset', setup: withTeam })
+    fake.listTeams(['web'])
     await watch.look()
-    expect(fake.shown.at(-1)).toEqual({ setup: withTeam, problem: null })
+    expect(fake.shown).toEqual([
+      { setup: SETUP, problem: null },
+      { setup: { project: 'C:/w/app', teams: ['web'] }, problem: null },
+    ])
+    // A look in another folder of no team shows that folder.
+    fake.answer({ kind: 'unset', project: 'C:/w/other' })
+    await watch.look()
+    expect(fake.shown.at(-1)).toEqual({ setup: { project: 'C:/w/other', teams: ['web'] }, problem: null })
   })
 
   test('a look that finds a problem writes it over the last setup, once, and the next look that finds none clears it', async () => {
@@ -121,7 +135,7 @@ describe('SetupWatch', () => {
       { setup: SETUP, problem },
     ])
 
-    fake.answer({ kind: 'unset', setup: SETUP })
+    fake.answer(UNSET)
     await watch.look()
     expect(fake.shown.at(-1)).toEqual({ setup: SETUP, problem: null })
   })
@@ -139,7 +153,7 @@ describe('SetupWatch', () => {
   })
 
   test('a look that finds the register binds it, clears the setup and ends the watch, in that order', async () => {
-    const fake = fakePorts({ kind: 'unset', setup: SETUP })
+    const fake = fakePorts(UNSET)
     const watch = new SetupWatch(fake.ports, SETUP)
     await watch.show()
     const timers = timersOf(watch)
@@ -171,7 +185,7 @@ describe('SetupWatch', () => {
   })
 
   test('a write that failed is written again at the next look, though nothing changed', async () => {
-    const fake = fakePorts({ kind: 'unset', setup: SETUP })
+    const fake = fakePorts(UNSET)
     const watch = new SetupWatch(fake.ports, SETUP)
     fake.failShows(true)
     await watch.show()
@@ -183,7 +197,7 @@ describe('SetupWatch', () => {
   })
 
   test('a look asked while one runs is skipped', async () => {
-    const fake = fakePorts({ kind: 'unset', setup: SETUP })
+    const fake = fakePorts(UNSET)
     const watch = new SetupWatch(fake.ports, SETUP)
     await Promise.all([watch.look(), watch.look()])
     expect(fake.calls.filter(call => call === 'find')).toEqual(['find'])

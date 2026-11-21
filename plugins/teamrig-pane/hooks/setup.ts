@@ -3,7 +3,7 @@
 // pointer file written there, starts the register (register.tsx bind) with no restart. A look that finds a problem,
 // such as a pointer file that names no team, shows it over the step and looks again; the look that finds the
 // register ends the watch. Each look stats the pointer files up from the session's folder and the settings file,
-// and lists the kit home's teams. The engine allows $ only at its call sites in a hook, so session.start hands this
+// and asks its `teams` port for the machine's teams. The engine allows $ only at its call sites in a hook, so session.start hands this
 // class ports built from $ calls rather than $ itself. Its timer never rejects: a failed look or write is tried again
 // at the next poll.
 import { messageOf } from './errors'
@@ -18,6 +18,8 @@ export type FoundPlaces = Extract<Places, { kind: 'found' }>
 export type SetupPorts = {
   /** Looks for the register again, as the session's start did (places.ts findPlaces). */
   find: () => Promise<Places>
+  /** The machine's teams to join one of, by id; it never rejects: a list it cannot get is its last one. */
+  teams: () => Promise<readonly string[]>
   /** Writes what the tasks view shows in place of tasks; null once the register is found. */
   show: (view: SetupView | null) => Promise<void>
   /** Starts reading the register a look found, in place of any started before (register.tsx). */
@@ -79,7 +81,10 @@ export class SetupWatch {
         this.stop()
         return
       }
-      const next: SetupView = places.kind === 'unset' ? { setup: places.setup, problem: null } : { setup: this.shown.setup, problem: places.problem }
+      const next: SetupView =
+        places.kind === 'unset'
+          ? { setup: { project: places.project, teams: await this.ports.teams() }, problem: null }
+          : { setup: this.shown.setup, problem: places.problem }
       if (!this.mustShow && isSameSetup(next, this.shown)) return
       await this.write(next)
     } catch (error) {

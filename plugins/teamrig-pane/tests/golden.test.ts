@@ -102,12 +102,10 @@ function goldenFiles(changes: Record<string, string> = {}): MemoryFiles {
 
 /** The pane's first snapshot, the register found as the pane finds it: the project's pointer file, then the team config. */
 async function paneSnapshot(files: MemoryFiles): Promise<Snapshot> {
-  // The machine's zone is UTC: the team config's, as teamrig read it, must win over it. The project's pointer names its
-  // team, so the kit home's teams are never listed.
+  // The machine's zone is UTC: the team config's, as teamrig read it, must win over it.
   const places = await findPlaces({
     env: { TEAMRIG_HOME: KIT },
     files,
-    folders: async () => [],
     home: null,
     cwd: `${GOLDEN_ROOT}/proj`,
     machineZone: 'UTC',

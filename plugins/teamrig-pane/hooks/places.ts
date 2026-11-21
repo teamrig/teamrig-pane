@@ -6,7 +6,7 @@
 // owner before it reads NOT PICKED UP, the team's zone (its `timeZone`, else the machine's, as teamrig resolves it),
 // which waits are the owner's (its `register.ownerSource` and `register.requireDecisionCard`), how the team ranks its
 // tasks (its `focus`) and how many hours teamrig keeps its turn log, the Log view's window.
-import type { ProjectSetup, TeamSettings } from '../types'
+import type { TeamSettings } from '../types'
 import { DEFAULT_FOCUS, DEFAULT_REGISTER, parseConfigText, TimeZone, type ConfigRead, type KitConfig } from './core/read/index'
 import { slashed, type Files, type RegisterDirs } from './source'
 import type { TurnLogPlace } from './turn-log'
@@ -53,18 +53,16 @@ export type TeamFiles = { team: string; dir: string; teamsDir: string; config: s
 /**
  * The folders of the register of the session's team, the team's files and its settings (teamSettings: the team
  * config's, else teamrig's defaults), or the problem the pane shows instead of tasks, the goals document with
- * either; or, with no team, the project's setup.
+ * either; or, with no team, the session's folder: the project teamrig is not set up for.
  */
 export type Places =
   | { kind: 'found'; dirs: RegisterDirs; team: TeamFiles; settings: TeamSettings; goalsDoc: string | null }
   | { kind: 'problem'; problem: string; goalsDoc: string | null }
-  | { kind: 'unset'; setup: ProjectSetup }
+  | { kind: 'unset'; project: string }
 
 export type PlacesInput = {
   env: PlacesEnv
   files: Pick<Files, 'stamp' | 'read'>
-  /** The names of the folders right under a folder; none when it is not there. It rejects when it cannot list one. */
-  folders: (path: string) => Promise<string[]>
   /** The person's home folder (USERPROFILE or HOME), for `~/` and the default kit home. */
   home: string | null
   /** The session's folder, where the walk for teamrig's pointer file starts. */
@@ -75,11 +73,17 @@ export type PlacesInput = {
 
 type Found<T> = { ok: true; value: T } | { ok: false; problem: string }
 
+/** The kit home: `$TEAMRIG_HOME`, else `.teamrig` under the person's home folder; null with neither. */
+export function kitHomeOf(env: PlacesEnv, home: string | null): string | null {
+  const at = home === null ? null : slashed(home)
+  const named = env[TEAMRIG_ENV.home]?.trim() || undefined
+  return named === undefined ? (at === null ? null : `${at}/.teamrig`) : slashed(withHome(named, at))
+}
+
 export async function findPlaces(input: PlacesInput): Promise<Places> {
   const home = input.home === null ? null : slashed(input.home)
   const variable = (name: PlaceVariable): string | undefined => input.env[name]?.trim() || undefined
-  const kitVariable = variable(TEAMRIG_ENV.home)
-  const kit = kitVariable === undefined ? (home === null ? null : `${home}/.teamrig`) : slashed(withHome(kitVariable, home))
+  const kit = kitHomeOf(input.env, input.home)
   const named = variable(PANE_ENV.settings)
   const settingsPath = named === undefined ? (kit === null ? null : `${kit}/pane.json`) : slashed(withHome(named, home))
   const settings: Found<Settings> = settingsPath === null ? { ok: true, value: {} } : await readSettings(input.files, settingsPath, named !== undefined)
@@ -94,7 +98,7 @@ export async function findPlaces(input: PlacesInput): Promise<Places> {
       const problem = `no register found: start the session in a teamrig team's project (${TEAM_POINTER}) or set ${TEAMRIG_ENV.team}`
       return { kind: 'problem', problem, goalsDoc }
     }
-    return { kind: 'unset', setup: { project: slashed(input.cwd), teams: await kitTeams(input.folders, `${kit}/teams`) } }
+    return { kind: 'unset', project: slashed(input.cwd) }
   }
   const folders = await teamFolders(input, team.value, kit)
   if (!folders.ok) return { kind: 'problem', problem: folders.problem, goalsDoc }
@@ -230,18 +234,6 @@ function checkTeam(team: string, from: string): Found<string> {
   return TEAM_ID.test(team)
     ? { ok: true, value: team }
     : { ok: false, problem: `${from}: "${team}" is not a team id (a lowercase letter, then lowercase letters, digits or -, at most 32)` }
-}
-
-/**
- * The teams in the kit home's teams folder, by id, sorted: its folders named as teamrig names a team. A folder that
- * cannot be listed lists none, as the list only offers a team to join and the rest of the setup still shows.
- */
-async function kitTeams(folders: PlacesInput['folders'], teamsDir: string): Promise<string[]> {
-  try {
-    return teamIds(await folders(teamsDir))
-  } catch {
-    return []
-  }
 }
 
 /** The folder names that name a team, as teamrig names one, sorted. */
