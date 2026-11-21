@@ -66,7 +66,7 @@ import {
 import type { PaneKey, PaneStore } from './pane-store'
 import { screenOf } from './screen'
 import { openConversation, showMode, switchView, type MoveFocus, type ViewLives } from './steps'
-import { findPlaces, kitHomeOf, teamIds, type Places, type PlacesEnv } from './places'
+import { findPlaces, type Places, type PlacesEnv } from './places'
 import { lookupSession, type SessionFound } from './session-roster'
 import type { SessionsRead } from './sessions-document'
 import { TaskDetails, type RefPlaces } from './details'
@@ -117,6 +117,8 @@ import { LivePrevious } from './previous-conversation'
 import { LiveTeam } from './team-source'
 import { TeamWeeks } from './team-weeks'
 import { SetupWatch } from './setup'
+import { SETUP_TEAMS_ASKS, SetupTeams } from './setup-teams'
+import { readDocuments } from './read-port'
 import { LiveMeetings } from './meetings'
 import { OwnerActs } from './owner-acts'
 import { NoteHold } from './note-hold'
@@ -527,8 +529,8 @@ export const register: Register = on => {
       list: path => unlessMissing(() => $.fs.list(path), () => $.fs.exists(path), null),
       read: path => $.fs.read(path),
     }
-    // The folders right under a folder: the kit home's teams, for a project teamrig is not set up for and for the Team
-    // tab. A missing folder lists none (source.ts unlessMissing).
+    // The folders right under a folder: the kit home's teams, for the tree's other registers, the Teams tab's weeks
+    // and Stats. A missing folder lists none (source.ts unlessMissing).
     const folders = async (path: string): Promise<string[]> => {
       const entries = await unlessMissing(() => $.fs.list(path), () => $.fs.exists(path), null)
       return entries === null ? [] : entries.filter(entry => entry.kind === 'dir').map(entry => entry.name)
@@ -779,16 +781,17 @@ export const register: Register = on => {
     const findHere = () => findPlaces({ env, files, home: home ?? null, cwd: e.cwd, machineZone })
     const places = await findHere()
     if (places.kind === 'unset') {
-      // The teams to join one of: the kit home's folders named as teamrig names a team. One it cannot list lists
-      // none, as the list only offers a team to join and the rest of the setup still shows.
-      const kit = kitHomeOf(env, home ?? null)
-      const kitTeams = async (): Promise<readonly string[]> => {
-        try {
-          return kit === null ? [] : teamIds(await folders(`${kit}/teams`))
-        } catch {
-          return []
-        }
-      }
+      // The teams to join one of are the ones teamrig serves a project with no team (setup-teams.ts): asked as the
+      // CLI finds the asker, since no session is known here. A teamrig that is missing or cannot answer lists none,
+      // as the list only offers a team to join and the rest of the setup still shows.
+      const setupTeams = new SetupTeams({
+        read: async () =>
+          readDocuments(cli, { run: (argv, timeoutMs) => run(argv, { cwd: e.cwd, timeoutMs }) }, SETUP_TEAMS_ASKS, {
+            session: null,
+            conversation: await $.session.id(),
+          }),
+        now: () => $.clock.now(),
+      })
       // Nothing to read until a team or a register is named here: the tasks view shows how to set the project up,
       // and the watch looks again at each poll and binds the register it finds.
       live = null
@@ -811,13 +814,13 @@ export const register: Register = on => {
       const watching = new SetupWatch(
         {
           find: findHere,
-          teams: kitTeams,
+          teams: () => setupTeams.list(),
           show: async shown => {
             await update($, setup, () => shown)
           },
           bind,
         },
-        { project: places.project, teams: await kitTeams() },
+        { project: places.project, teams: await setupTeams.list() },
       )
       watch = watching
       await watching.show()
