@@ -262,8 +262,8 @@ describe('the fake teamrig read', () => {
     const places = await findPlaces(disk)
     if (places.kind !== 'unset') throw new Error(`a team or a problem was found: ${places.kind}`)
     const teamrig = fakeRead(disk, () => NOW)
-    expect(readOf(await teamrig(words('config')), 'config', configOf)).toEqual({ kind: 'no-team', teams: places.setup.teams, timeZone: 'UTC' })
-    expect(places.setup.teams.length).toBe(2)
+    // The kit home's folders that name a team, sorted.
+    expect(readOf(await teamrig(words('config')), 'config', configOf)).toEqual({ kind: 'no-team', teams: ['ops', 'web'], timeZone: 'UTC' })
     expect(await teamrig(words('config tasks'))).toEqual({ exitCode: 2, stdout: '', stderr: 'REFUSED no team here: tasks needs one', isStdoutTruncated: false })
   })
 

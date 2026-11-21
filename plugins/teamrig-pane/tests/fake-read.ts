@@ -9,7 +9,7 @@
 // read fails the run instead of being named; a revision is the hash of the document's own text.
 import { indexMarks, inboxLines, parseConfigText, readHiringLog, readMarks, readRenames, Roster, unreadOf, type KitConfig } from '../hooks/core/read/index'
 import { lineHash } from '../hooks/line-hash'
-import { findPlaces, teamIds, teamStateDir, type Places, type PlacesInput, type TeamFiles } from '../hooks/places'
+import { findPlaces, kitHomeOf, teamIds, teamStateDir, type PlacesInput, type TeamFiles } from '../hooks/places'
 import { DOCUMENT_NAMES, isDocumentName, type DocumentName, type JsonRecord } from '../hooks/read-document'
 import { registerPaths, TaskRegisterSource, type Files, type RegisterDirs } from '../hooks/source'
 import type { CliRun } from '../hooks/teamrig-cli'
@@ -18,8 +18,11 @@ import { NO_TREE_GOALS } from './fixtures'
 import { askedOf, printed, refused, settingRows, type Asked } from './served-documents'
 import { servedSessions, type TeamSessions } from './served-sessions'
 
-/** Where the fake finds the register: what the pane's own search takes, over files the fold can read. */
-export type FakeDisk = Omit<PlacesInput, 'files'> & { readonly files: Files }
+/**
+ * Where the fake finds the register: what the pane's own search takes, over files the fold can read, and `folders`,
+ * the names of the folders right under a folder (none when it is not there), which name the machine's teams.
+ */
+export type FakeDisk = Omit<PlacesInput, 'files'> & { readonly files: Files; readonly folders: (path: string) => Promise<string[]> }
 
 /** One run of the fake: the words after `node <main>`, or the whole argv. */
 export type FakeRead = (argv: readonly string[]) => Promise<CliRun>
@@ -189,9 +192,11 @@ async function teamBody(name: DocumentName, disk: FakeDisk, team: Team, asked: A
 }
 
 /** With no team only the `config` document is served: the machine's teams to join one of; any other refuses the run. */
-function teamlessBody(name: DocumentName, places: Exclude<Places, { kind: 'problem' }>, machineZone: string): JsonRecord {
+async function teamlessBody(name: DocumentName, disk: FakeDisk): Promise<JsonRecord> {
   if (name !== 'config') throw new Refusal(`no team here: ${name} needs one`)
-  return { team: null, teams: places.kind === 'unset' ? places.setup.teams : [], timeZone: machineZone, settings: [] }
+  const kit = kitHomeOf(disk.env, disk.home)
+  const teams = kit === null ? [] : teamIds(await disk.folders(`${kit}/teams`))
+  return { team: null, teams, timeZone: disk.machineZone, settings: [] }
 }
 
 /** The revision each document was asked `--unless` it is at (`tasks=<revision>,inbox=<revision>`). */
@@ -220,7 +225,7 @@ async function answer(disk: FakeDisk, asked: Asked, now: number): Promise<CliRun
   const held = heldOf(asked.unless)
   const documents: JsonRecord[] = []
   for (const name of names) {
-    const body = team === null ? teamlessBody(name, places, disk.machineZone) : await teamBody(name, disk, team, asked, now)
+    const body = team === null ? await teamlessBody(name, disk) : await teamBody(name, disk, team, asked, now)
     documents.push(enveloped(name, body, held.get(name)))
   }
   return printed(...documents)

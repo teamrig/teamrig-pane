@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'claude-code/testing'
-import { findPlaces, foldersUp, teamIds, teamStateDir, type Places, type PlacesEnv, type PlacesInput, type TeamFiles } from '../hooks/places'
+import { findPlaces, foldersUp, kitHomeOf, teamIds, teamStateDir, type Places, type PlacesEnv, type PlacesInput, type TeamFiles } from '../hooks/places'
 import { TEAM_SETTINGS } from './fixtures'
 import { configOf } from './team-fixtures'
 
@@ -46,12 +46,7 @@ function fakeFiles(files: Readonly<Record<string, string>>, locked: readonly str
       return text
     },
   }
-  const folders: PlacesInput['folders'] = async path => {
-    if (locked.includes(path)) throw new Error(`EACCES: ${path}`)
-    const under = Object.keys(files).flatMap(file => (file.startsWith(`${path}/`) ? [file.slice(path.length + 1).split('/')] : []))
-    return [...new Set(under.flatMap(([name = '', ...deeper]) => (deeper.length > 0 ? [name] : [])))]
-  }
-  return { port, folders, reads }
+  return { port, reads }
 }
 
 /** `machineZone`: the zone the machine runs in, UTC unless given. */
@@ -66,7 +61,6 @@ async function places(env: PlacesEnv, files: Readonly<Record<string, string>> = 
   const found = await findPlaces({
     env,
     files: fake.port,
-    folders: fake.folders,
     home: options.home === undefined ? 'C:\\Homes\\a\\' : options.home,
     cwd: options.cwd === undefined ? 'C:\\w\\app\\src' : options.cwd,
     machineZone: options.machineZone ?? 'UTC',
@@ -243,23 +237,27 @@ describe('places', () => {
     expect(locked.found).toEqual({ kind: 'problem', problem: `${POINTER} cannot be read (EBUSY: ${POINTER})`, goalsDoc: null })
   })
 
-  test('with no team, the project is not set up: its folder and the kit home’s teams', async () => {
+  test('with no team, the project is not set up: its folder alone, and no file of a team in the kit home is read', async () => {
     const { found, reads } = await places({})
-    expect(found).toEqual({ kind: 'unset', setup: { project: 'C:/w/app/src', teams: [] } })
+    expect(found).toEqual({ kind: 'unset', project: 'C:/w/app/src' })
     expect(reads).toEqual([])
-    // A folder named as teamrig names a team is one; a file, or a folder no team id names, is not.
-    const kit = { [CONFIG]: '{}', [`${KIT}/teams/ops/state/events.jsonl`]: '', [`${KIT}/teams/Old/config.json`]: '{}', [`${KIT}/teams/notes.md`]: '' }
-    expect((await places({}, kit)).found).toEqual({ kind: 'unset', setup: { project: 'C:/w/app/src', teams: ['ops', 'web'] } })
-    // A teams folder it cannot list leaves the teams out, never the setup.
-    const locked = await places({}, kit, { locked: [`${KIT}/teams`] })
-    expect(locked.found).toEqual({ kind: 'unset', setup: { project: 'C:/w/app/src', teams: [] } })
+    const kit = await places({}, { [CONFIG]: '{}', [`${KIT}/teams/ops/state/events.jsonl`]: '' })
+    expect(kit.found).toEqual({ kind: 'unset', project: 'C:/w/app/src' })
+    expect(kit.reads).toEqual([])
   })
 
-  test('a project not set up follows the kit home its variable moves, and a settings file leaves it unset', async () => {
-    const moved = await places({ TEAMRIG_HOME: 'D:\\kit' }, { 'D:/kit/teams/web/config.json': '{}', [CONFIG]: '{}' })
-    expect(moved.found).toEqual({ kind: 'unset', setup: { project: 'C:/w/app/src', teams: ['web'] } })
+  test('a settings file leaves a project not set up unset', async () => {
     const named = await places({ TEAMRIG_PANE_SETTINGS: '~/pane.json' }, { 'C:/Homes/a/pane.json': json({ goalsDoc: 'docs/G.md' }) })
-    expect(named.found).toEqual({ kind: 'unset', setup: { project: 'C:/w/app/src', teams: [] } })
+    expect(named.found).toEqual({ kind: 'unset', project: 'C:/w/app/src' })
+  })
+
+  test('the kit home is its variable, with ~/ the home folder, else .teamrig under the home folder; null with neither', () => {
+    expect(kitHomeOf({}, 'C:\\Homes\\a\\')).toBe(KIT)
+    expect(kitHomeOf({ TEAMRIG_HOME: ' D:\\kit\\ ' }, 'C:\\Homes\\a')).toBe('D:/kit')
+    expect(kitHomeOf({ TEAMRIG_HOME: '~/kit' }, 'C:\\Homes\\a')).toBe('C:/Homes/a/kit')
+    expect(kitHomeOf({ TEAMRIG_HOME: '  ' }, 'C:/Homes/a')).toBe(KIT)
+    expect(kitHomeOf({ TEAMRIG_HOME: 'D:/kit' }, null)).toBe('D:/kit')
+    expect(kitHomeOf({}, null)).toBeNull()
   })
 
   test('with no session folder or no home folder, it says what to set: a teamrig project or team, or the kit home', async () => {
@@ -270,7 +268,7 @@ describe('places', () => {
     const homeless = "no register found: set TEAMRIG_HOME for teamrig's register"
     expect((await places({}, WEB_POINTER, { home: null })).found).toEqual({ kind: 'problem', problem: homeless, goalsDoc: null })
     expect((await places({}, {}, { home: null, cwd: null })).found).toEqual({ kind: 'problem', problem: homeless, goalsDoc: null })
-    expect((await places({ TEAMRIG_HOME: 'D:/kit' }, {}, { home: null })).found).toEqual({ kind: 'unset', setup: { project: 'C:/w/app/src', teams: [] } })
+    expect((await places({ TEAMRIG_HOME: 'D:/kit' }, {}, { home: null })).found).toEqual({ kind: 'unset', project: 'C:/w/app/src' })
   })
 
   test('the pointer walk climbs to the root of a drive or of a slash path', async () => {
