@@ -129,9 +129,15 @@ describe('planOf', () => {
   })
 
   test('keeps a time move whose stored time teamrig could not read as a moment, with no time', () => {
-    const { plan, problems } = readOf(documentOf([served({ next: { kind: 'time', who: 'api', task: 'T7', behind: null, at: 'next spring' } })]))
+    const { plan, problems } = readOf(documentOf([served({ next: { kind: 'time', who: 'api', task: 'T7', behind: null, at: null } })]))
     expect(plan.tasks[0]?.next).toEqual({ kind: 'time', who: 'api', task: 'T7', behind: null, at: null })
     expect(problems).toEqual([])
+  })
+
+  test('leaves out a task whose time move holds a text that is no moment: teamrig serves a moment or null', () => {
+    const { plan, problems } = readOf(documentOf([planned('T6', { next: { kind: 'time', who: 'api', task: 'T6', behind: null, at: 'next spring' } })]))
+    expect(plan.tasks).toEqual([])
+    expect(problems).toEqual(['teamrig served 1 planned task the pane cannot read, T6 (next.at): update teamrig-pane'])
   })
 
   test('reads a move of a kind a later minor added as unknown, the task kept', () => {

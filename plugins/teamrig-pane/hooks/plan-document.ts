@@ -9,7 +9,7 @@
 // not know reads as unknown, as the interface says a reader may pass one over. `validUntil` is the first moment an
 // answer here may change with no file moving: teamrig's revision covers files and never the clock, so past it the
 // caller asks again with no revision held. An `unchanged` answer holds no plan, so it is never handed here. Pure.
-import { Fields, isList, leftOutLine, momentOf, type BodyRead } from './document-fields'
+import { Fields, isList, leftOutLine, type BodyRead } from './document-fields'
 import { isRecord, type ReadDocument } from './read-document'
 
 /** The date a task works to: its own due, or the earlier one of a task that needs it. */
@@ -127,8 +127,8 @@ function moveOf(move: Fields | null): PlanMove | null {
     case 'approval':
       return { kind, who: move.text('who'), task: move.text('task'), behind: move.textOrNull('behind') }
     case 'time':
-      // teamrig serves the stored text where it could not read a moment from it: the move still stands, with no time.
-      return { kind, who: move.text('who'), task: move.text('task'), behind: move.textOrNull('behind'), at: momentOf(move.text('at')) }
+      // teamrig serves null where it could not read a moment from the stored time: the move still stands, with no time.
+      return { kind, who: move.text('who'), task: move.text('task'), behind: move.textOrNull('behind'), at: move.momentOrNull('at') }
     case 'elsewhere':
       return { kind, who: move.text('who'), task: move.text('task'), team: move.text('team'), need: move.text('need') }
     default:
