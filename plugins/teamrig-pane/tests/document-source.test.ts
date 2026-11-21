@@ -12,10 +12,12 @@ import { tasksOf } from '../hooks/tasks-document'
 import type { CliRun, TeamrigCli } from '../hooks/teamrig-cli'
 import type { Snapshot, TaskRow } from '../types'
 import { HOUR, NO_TEAM, NOW, SNAPSHOT_SETTINGS } from './fixtures'
-import { AN_HOUR_AGO, askedOf, configDocument, inboxDocument, printed, refused, session, sessionsDocument, task, tasksDocument, type Asked } from './served-documents'
+import { AN_HOUR_AGO, askedOf, configDocument, inboxDocument, planDocument, planned, printed, refused, session, sessionsDocument, task, tasksDocument, type Asked } from './served-documents'
 
 const CLI: TeamrigCli = { kind: 'found', main: 'K/teamrig/dist/cli/main.js' }
 const DAY = 24 * HOUR
+/** What a teamrig of interface 1.0 answers a run that names the plan. */
+const UNKNOWN_PLAN = 'unknown document "plan"; the documents are tasks, inbox, sessions, config'
 
 /**
  * A teamrig answering `read` by the words asked: each document as it stands, `unchanged` for one asked with the
@@ -26,6 +28,8 @@ class FakeTeamrig {
   sessions: JsonRecord = sessionsDocument('s1')
   config: JsonRecord = configDocument('c1')
   inboxes: Record<string, JsonRecord> = { api: inboxDocument('i1', 'api'), lead: inboxDocument('i7', 'lead') }
+  /** The plan as interface 1.1 serves it; null: a teamrig of interface 1.0, which refuses a run that names it. */
+  plan: JsonRecord | null = planDocument('p1', [planned('T1')])
   /** Answers every run in place of the documents, an Error by rejecting; null: the documents. */
   broken: CliRun | Error | null = null
   readonly asked: Asked[] = []
@@ -51,7 +55,8 @@ class FakeTeamrig {
     const held = new Set((asked.unless ?? '').split(','))
     const documents: JsonRecord[] = []
     for (const name of asked.documents) {
-      const document = this.documentOf(name, asked.session)
+      if (name === 'plan' && this.plan === null) return refused(UNKNOWN_PLAN)
+      const document = name === 'plan' ? this.plan : this.documentOf(name, asked.session)
       if (document === null) return refused(`session ${asked.session ?? '(none)'} is not on team shop`)
       const revision = String(document['revision'])
       documents.push(held.has(`${name}=${revision}`) ? { interface: '1.0', document: name, revision, unchanged: true } : document)
@@ -160,7 +165,7 @@ describe('DocumentSource: who a poll asks as', () => {
     const { teamrig, files, source } = rig()
     const snapshot = await drawn(source)
     expect(teamrig.asked).toEqual([
-      { documents: ['tasks', 'sessions', 'config'], session: null, unless: null, conversation: 'c-1' },
+      { documents: ['tasks', 'sessions', 'config', 'plan'], session: null, unless: null, conversation: 'c-1' },
       { documents: ['inbox'], session: 'api', unless: null, conversation: 'c-1' },
     ])
     expect(files.polls).toEqual([input()])
@@ -174,20 +179,20 @@ describe('DocumentSource: who a poll asks as', () => {
     expect(snapshot.problem).toBeNull()
   })
 
-  test('once the area is known to be on the team, one run asks all four as it', async () => {
+  test('once the area is known to be on the team, one run asks every document as it', async () => {
     const { teamrig, files, source } = rig()
     await drawn(source)
     teamrig.taken()
     files.next = BASE
     await drawn(source)
-    expect(teamrig.asked).toEqual([{ documents: ['tasks', 'sessions', 'config', 'inbox'], session: 'api', unless: 'tasks=t1,sessions=s1,config=c1,inbox=i1', conversation: 'c-1' }])
+    expect(teamrig.asked).toEqual([{ documents: ['tasks', 'sessions', 'config', 'inbox', 'plan'], session: 'api', unless: 'tasks=t1,sessions=s1,config=c1,inbox=i1,plan=p1', conversation: 'c-1' }])
   })
 
   test('a pinned session on the team is the area, and its inbox the one drawn', async () => {
     const { teamrig, source } = rig()
     const snapshot = await drawn(source, { pinned: 'lead' })
     expect(teamrig.taken().map(asked => [asked.documents.join(' '), asked.session])).toEqual([
-      ['tasks sessions config', null],
+      ['tasks sessions config plan', null],
       ['inbox', 'lead'],
     ])
     expect(snapshot.area).toBe('lead')
@@ -195,7 +200,7 @@ describe('DocumentSource: who a poll asks as', () => {
     expect(snapshot.areaName).toBe('shop-lead')
     expect(snapshot.inbox.map(item => item.text)).toEqual(['a line for lead'])
     await drawn(source, { pinned: 'lead', force: true })
-    expect(teamrig.asked.map(asked => [asked.documents.join(' '), asked.session])).toEqual([['tasks sessions config inbox', 'lead']])
+    expect(teamrig.asked.map(asked => [asked.documents.join(' '), asked.session])).toEqual([['tasks sessions config inbox plan', 'lead']])
   })
 
   test('a pinned word the team does not hold names no session and asks for no inbox', async () => {
@@ -203,8 +208,8 @@ describe('DocumentSource: who a poll asks as', () => {
     const snapshot = await drawn(source, { pinned: 'ghost' })
     await drawn(source, { pinned: 'ghost', force: true })
     expect(teamrig.asked.map(asked => [asked.documents.join(' '), asked.session])).toEqual([
-      ['tasks sessions config', null],
-      ['tasks sessions config', null],
+      ['tasks sessions config plan', null],
+      ['tasks sessions config plan', null],
     ])
     expect(snapshot.area).toBe('ghost')
     expect(snapshot.areaSource).toBe('pinned')
@@ -245,6 +250,7 @@ describe('DocumentSource: who a poll asks as', () => {
     files.next = BASE
     const snapshot = await drawn(source, { pinned: 'api' })
     expect(teamrig.taken().map(asked => [asked.documents.join(' '), asked.session])).toEqual([
+      ['tasks sessions config inbox plan', 'api'],
       ['tasks sessions config inbox', 'api'],
       ['tasks sessions config', null],
     ])
@@ -306,7 +312,7 @@ describe('DocumentSource: when it reads', () => {
     const { teamrig, files, source } = rig(null)
     files.numbers(BASE)
     await drawn(source)
-    expect(teamrig.asked.map(asked => asked.documents.join(' '))).toEqual(['tasks sessions config', 'inbox'])
+    expect(teamrig.asked.map(asked => asked.documents.join(' '))).toEqual(['tasks sessions config plan', 'inbox'])
   })
 
   test('with no snapshot of the files yet there is nothing to draw on, and nothing is run', async () => {
@@ -326,13 +332,13 @@ describe('DocumentSource: when it reads', () => {
     teamrig.taken()
     teamrig.tasks = tasksDocument('t2', [task('T5')])
     const second = await drawn(source, { force: true })
-    expect(teamrig.taken().map(asked => asked.unless)).toEqual(['tasks=t1,sessions=s1,config=c1,inbox=i1'])
+    expect(teamrig.taken().map(asked => asked.unless)).toEqual(['tasks=t1,sessions=s1,config=c1,inbox=i1,plan=p1'])
     expect(titles(second)).toEqual(['T5 Title of T5'])
     expect(second.inbox).toEqual(first.inbox)
     expect(second.leads).toEqual(first.leads)
     expect(second.notPickedUpAfterHours).toBe(36)
     await drawn(source, { force: true })
-    expect(teamrig.asked.map(asked => asked.unless)).toEqual(['tasks=t2,sessions=s1,config=c1,inbox=i1'])
+    expect(teamrig.asked.map(asked => asked.unless)).toEqual(['tasks=t2,sessions=s1,config=c1,inbox=i1,plan=p1'])
   })
 })
 
@@ -434,7 +440,11 @@ describe('DocumentSource: a read that fails', () => {
     teamrig.taken()
     teamrig.broken = new Error('timed out')
     const failed = await drawn(source, { force: true })
-    expect(teamrig.taken().map(asked => asked.session)).toEqual(['api', null])
+    expect(teamrig.taken().map(asked => [asked.documents.join(' '), asked.session])).toEqual([
+      ['tasks sessions config inbox plan', 'api'],
+      ['tasks sessions config inbox', 'api'],
+      ['tasks sessions config', null],
+    ])
     expect(failed.problem).toBe('teamrig read did not finish: timed out')
     expect({ ...failed, problem: null }).toEqual(good)
     teamrig.broken = null
@@ -450,7 +460,7 @@ describe('DocumentSource: a read that fails', () => {
     expect(titles(bad)).toEqual(titles(good))
     expect(bad.problem).toBe("teamrig's tasks document holds no task list: update teamrig")
     await drawn(source, { force: true })
-    expect(teamrig.taken().map(asked => asked.unless)).toEqual(['tasks=t1,sessions=s1,config=c1,inbox=i1', 'tasks=t1,sessions=s1,config=c1,inbox=i1'])
+    expect(teamrig.taken().map(asked => asked.unless)).toEqual(['tasks=t1,sessions=s1,config=c1,inbox=i1,plan=p1', 'tasks=t1,sessions=s1,config=c1,inbox=i1,plan=p1'])
     teamrig.tasks = tasksDocument('t1', [task('T1'), task('T2', { owner: 'web' })])
     expect((await drawn(source, { force: true })).problem).toBeNull()
   })
@@ -460,7 +470,7 @@ describe('DocumentSource: a read that fails', () => {
     teamrig.broken = printed(tasksDocument('t1', [task('T4')]))
     const snapshot = await drawn(source)
     expect(titles(snapshot)).toEqual(['T4 Title of T4'])
-    expect(snapshot.problem).toBe('teamrig read printed no sessions document; teamrig read printed no config document')
+    expect(snapshot.problem).toBe('teamrig read printed no sessions document; teamrig read printed no config document; teamrig read printed no plan document')
   })
 
   test('the inbox of another session is never drawn', async () => {
@@ -469,7 +479,7 @@ describe('DocumentSource: a read that fails', () => {
     teamrig.taken()
     teamrig.inboxes = { api: inboxDocument('i1', 'api'), lead: { interface: '1.0', document: 'inbox', revision: 'i8', problems: [] } }
     const snapshot = await drawn(source, { pinned: 'lead', force: true })
-    expect(teamrig.asked.map(asked => [asked.documents.join(' '), asked.session, asked.unless])).toEqual([['tasks sessions config inbox', 'lead', 'tasks=t1,sessions=s1,config=c1']])
+    expect(teamrig.asked.map(asked => [asked.documents.join(' '), asked.session, asked.unless])).toEqual([['tasks sessions config inbox plan', 'lead', 'tasks=t1,sessions=s1,config=c1,plan=p1']])
     expect(snapshot.area).toBe('lead')
     expect(snapshot.unreadInbox).toBeNull()
     expect(snapshot.inbox).toEqual([])
@@ -487,13 +497,79 @@ describe('DocumentSource: a read that fails', () => {
 })
 
 describe('DocumentSource: the documents it holds for a caller', () => {
-  test('none before a read, then the sessions and the config last read', async () => {
+  test('none before a read, then the sessions, the config and the plan last read', async () => {
     const { source } = rig()
     expect(source.sessionsRead).toBeNull()
     expect(source.settingsRead).toBeNull()
+    expect(source.planRead).toBeNull()
     await drawn(source)
     expect(source.sessionsRead?.self).toEqual({ team: 'shop', session: 'api' })
     expect(source.settingsRead?.kind).toBe('team')
+    expect(source.planRead?.tasks.map(planned => planned.id)).toEqual(['T1'])
+  })
+})
+
+describe('DocumentSource: the plan', () => {
+  test('a teamrig that does not serve the plan still has its other documents drawn, under the reason', async () => {
+    const { teamrig, source } = rig()
+    teamrig.plan = null
+    const first = await drawn(source)
+    expect(teamrig.taken().map(asked => [asked.documents.join(' '), asked.session])).toEqual([
+      ['tasks sessions config plan', null],
+      ['tasks sessions config', null],
+      ['inbox', 'api'],
+    ])
+    expect(titles(first)).toEqual(['T1 Title of T1', 'T2 Title of T2'])
+    expect(first.inbox).toHaveLength(1)
+    expect(first.problem).toBe(`REFUSED ${UNKNOWN_PLAN}`)
+    expect(source.planRead).toBeNull()
+    const second = await drawn(source, { force: true })
+    expect(teamrig.taken().map(asked => [asked.documents.join(' '), asked.session])).toEqual([
+      ['tasks sessions config inbox plan', 'api'],
+      ['tasks sessions config inbox', 'api'],
+    ])
+    expect(second.problem).toBe(`REFUSED ${UNKNOWN_PLAN}`)
+  })
+
+  test('once teamrig serves the plan it is read and the reason goes', async () => {
+    const { teamrig, source } = rig()
+    teamrig.plan = null
+    await drawn(source)
+    teamrig.plan = planDocument('p2', [planned('T2'), planned('T1')])
+    const snapshot = await drawn(source, { force: true })
+    expect(snapshot.problem).toBeNull()
+    expect(source.planRead?.tasks.map(planned => planned.id)).toEqual(['T2', 'T1'])
+  })
+
+  test('a run that failed with the plan keeps the plan last held', async () => {
+    const { teamrig, source } = rig()
+    await drawn(source)
+    teamrig.plan = null
+    const snapshot = await drawn(source, { force: true })
+    expect(snapshot.problem).toBe(`REFUSED ${UNKNOWN_PLAN}`)
+    expect(source.planRead?.tasks.map(planned => planned.id)).toEqual(['T1'])
+  })
+
+  test('its revision is handed back until validUntil, and from that moment the plan is asked for whole', async () => {
+    const { teamrig, source } = rig()
+    teamrig.plan = planDocument('p1', [planned('T1')], { validUntil: new Date(NOW + HOUR).toISOString() })
+    await drawn(source)
+    teamrig.taken()
+    await drawn(source, { now: NOW + HOUR - 1, force: true })
+    expect(teamrig.taken().map(asked => asked.unless)).toEqual(['tasks=t1,sessions=s1,config=c1,inbox=i1,plan=p1'])
+    teamrig.plan = planDocument('p1', [planned('T2')], { validUntil: null })
+    await drawn(source, { now: NOW + HOUR, force: true })
+    expect(teamrig.taken().map(asked => asked.unless)).toEqual(['tasks=t1,sessions=s1,config=c1,inbox=i1'])
+    expect(source.planRead?.tasks.map(planned => planned.id)).toEqual(['T2'])
+  })
+
+  test('a plan that cannot be read keeps the one held and names why', async () => {
+    const { teamrig, source } = rig()
+    await drawn(source)
+    teamrig.plan = { interface: '1.1', document: 'plan', revision: 'p2', problems: [] }
+    const snapshot = await drawn(source, { force: true })
+    expect(snapshot.problem).toContain("teamrig's plan document")
+    expect(source.planRead?.tasks.map(planned => planned.id)).toEqual(['T1'])
   })
 })
 

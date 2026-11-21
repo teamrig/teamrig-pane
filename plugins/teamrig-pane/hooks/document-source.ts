@@ -1,6 +1,7 @@
 // The snapshot the views draw, with what `teamrig read` serves laid over what the pane still folds from the team's
 // files (T4742): the task rows, the area with its name and inbox, who leads whom and the drawn settings come from
-// the `tasks`, `inbox`, `sessions` and `config` documents; the files keep feeding what no document serves yet, ids
+// the `tasks`, `inbox`, `sessions` and `config` documents (the `plan` document is read with them and held, drawn by
+// no view so far, T4759); the files keep feeding what no document serves yet, ids
 // and numbers only (the work marks, goals' ranks, spend, task counts, whose cards wait on the owner, and the other
 // teams' tasks the own ones are judged by, of which only the id, status and numbers are read). A title is drawn from
 // a document's row or not at all: an owner card whose task the rows lack is left out, and until the first tasks
@@ -11,7 +12,7 @@ import type { BodyRead } from './document-fields'
 import { isHeldFinished } from './done'
 import { inboxShown } from './inbox'
 import { inboxOf, type InboxRead } from './inbox-document'
-import { planOf } from './plan-document'
+import { planOf, type PlanRead } from './plan-document'
 import type { DocumentName, ReadDocument } from './read-document'
 import { readDocuments, type ReadPorts } from './read-port'
 import { nameOf, leadsOf } from './session-roster'
@@ -81,6 +82,11 @@ class Held<T> {
 /** The documents every read asks for; `inbox` joins them once the area is known to be on the team. */
 const ALWAYS: readonly DocumentName[] = ['tasks', 'sessions', 'config']
 
+/** What one run asks for: the documents of every read, the inbox when a session is named, the plan last. */
+function namesAsked(session: string | null, withPlan: boolean): DocumentName[] {
+  return [...ALWAYS, ...(session === null ? [] : ['inbox' as const]), ...(withPlan ? ['plan' as const] : [])]
+}
+
 /** Where the pane's conversation stands on `team`, as the held sessions document says. */
 type Place = {
   /** The session drawn: the pinned one, else the session of `team` this conversation runs. */
@@ -144,12 +150,18 @@ export class DocumentSource implements SnapshotSource {
     return this.config.value
   }
 
+  /** The plan document last read, which no view draws from so far; null before one is. */
+  get planRead(): PlanRead | null {
+    return this.plan.value
+  }
+
   /**
    * A new snapshot when a file moved, on `force`, or when the documents were read. They are read on `force`, when a
    * file a served document is built from moved, and each READ_EVERY_MS without a read. A move of the numbers alone
    * (spend, which the budget hooks write on every session's turn, the ranks, the other teams' registers) is drawn
-   * with the documents held and starts no run: none of the four documents holds them, and each run is a `node` start
-   * every open pane would pay. A throw of the file source passes through, as the caller shows it.
+   * with the documents held and starts no run: no document a view draws from holds them (the plan does, and is read
+   * within READ_EVERY_MS of such a move), and each run is a `node` start every open pane would pay. A throw of the
+   * file source passes through, as the caller shows it.
    */
   async poll(input: PollInput): Promise<Snapshot | null> {
     const moved = await this.files.pollFiles(input)
@@ -169,16 +181,22 @@ export class DocumentSource implements SnapshotSource {
    * second run. A failed run that named a session is tried again with none: a session retired since the document
    * was held must not refuse every later read, the one that would say so among them. Two runs failing for one reason
    * name it once.
+   *
+   * The plan rides the same run, a second one being a second `node` start each read. A teamrig older than interface
+   * 1.1 refuses a whole run that names it, so a failed run is first tried again without the plan, and only then
+   * without the session: the other documents are still drawn, under the reason the first run gave, and the plan last
+   * held is kept as any document of a failed run is.
    */
   private async read(team: string | null, input: PollInput): Promise<void> {
     this.readAt = input.now
     const problems: string[] = []
     const known = this.placeOf(team, input.pinned)
     let asked = known.areaName === null ? null : known.area
-    let isRead = await this.run(asked === null ? ALWAYS : [...ALWAYS, 'inbox'], asked, input, problems)
+    let isRead = await this.run(namesAsked(asked, true), asked, input, problems)
+    if (!isRead) isRead = await this.run(namesAsked(asked, false), asked, input, problems)
     if (!isRead && asked !== null) {
       asked = null
-      isRead = await this.run(ALWAYS, null, input, problems)
+      isRead = await this.run(namesAsked(null, false), null, input, problems)
     }
     if (isRead) {
       const now = this.placeOf(team, input.pinned)
@@ -189,7 +207,7 @@ export class DocumentSource implements SnapshotSource {
 
   /** One run for `names` as `session`; false when it answered no document, its reason added to `problems`. */
   private async run(names: readonly DocumentName[], session: string | null, input: PollInput, problems: string[]): Promise<boolean> {
-    const asks = names.map(name => ({ name, held: this.revisionOf(name, session) }))
+    const asks = names.map(name => ({ name, held: this.revisionOf(name, session, input.now) }))
     const result = await readDocuments(this.cli, this.ports, asks, { session, conversation: input.claudeSession })
     if (result.kind === 'failed') {
       problems.push(result.reason)
@@ -200,12 +218,19 @@ export class DocumentSource implements SnapshotSource {
     return true
   }
 
-  /** The revision to hand back for `name`; the inbox's only when it is held for the session asked as. */
-  private revisionOf(name: DocumentName, session: string | null): string | null {
+  /**
+   * The revision to hand back for `name`; the inbox's only when it is held for the session asked as, and the plan's
+   * only before its `validUntil`: its revision covers what it was built from, never the clock, so past that moment
+   * teamrig would answer `unchanged` for a plan the time alone has moved.
+   */
+  private revisionOf(name: DocumentName, session: string | null, now: number): string | null {
     if (name === 'tasks') return this.tasks.revision
     if (name === 'sessions') return this.sessions.revision
     if (name === 'config') return this.config.revision
-    if (name === 'plan') return this.plan.revision
+    if (name === 'plan') {
+      const validUntil = this.plan.value?.validUntil ?? null
+      return validUntil !== null && now >= validUntil ? null : this.plan.revision
+    }
     return this.inbox.value !== null && this.inbox.value.session.id === session ? this.inbox.revision : null
   }
 
@@ -270,6 +295,7 @@ export class DocumentSource implements SnapshotSource {
         ...this.tasks.lines,
         ...this.sessions.lines,
         ...this.config.lines,
+        ...this.plan.lines,
         ...this.inboxLines(place, inbox),
         this.otherTeam(base.team),
       ]),
