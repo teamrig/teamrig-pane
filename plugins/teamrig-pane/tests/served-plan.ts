@@ -42,7 +42,7 @@ function servedMove(move: NextMove<TaskRow>, tree: TaskTree<TaskRow>): JsonRecor
     case 'elsewhere':
       return { kind: 'elsewhere', who: move.who, task: move.task.id, team: move.team, need: move.need.id }
     case 'time':
-      return { kind: 'time', who: move.who, task: move.task.id, behind: move.behind?.id ?? null, at: parseDeadline(move.at, tree.zone)?.toISOString() ?? move.at }
+      return { kind: 'time', who: move.who, task: move.task.id, behind: move.behind?.id ?? null, at: parseDeadline(move.at, tree.zone)?.toISOString() ?? null }
     default:
       return { kind: move.kind, who: move.who, task: move.task.id, behind: move.behind?.id ?? null }
   }
