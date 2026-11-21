@@ -290,7 +290,8 @@ In a project teamrig is not set up for (no team), the pane shows how to set it u
 and nothing else, with no view buttons, Find row or mine/all/done until it finds a team (the minimized
 strip keeps its buttons, and a press opens the setup): one step, set up a team (ask Claude, or run
 `/teamrig:team-setup`, which makes the team and ties the project to it), opening with installing teamrig
-while no team is under the kit home. Joining a team already made (write `{"team": "<id>"}` to the
+while teamrig serves no team to join (`teamrig read config`, asked once a minute), which is also when it is
+not installed. Joining a team already made (write `{"team": "<id>"}` to the
 project's `.teamrig.json`) still works; the pane no longer lists it. The
 pane looks again every 3 s and lists the tasks once it finds a team, with no restart; a problem a look
 finds, such as a pointer with no team in it, is a `WARN` line over the step.

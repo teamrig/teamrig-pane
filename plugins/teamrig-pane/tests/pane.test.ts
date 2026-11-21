@@ -934,6 +934,36 @@ test('in a project teamrig is not set up for, the pane shows how to set it up al
   expect(disk.reads).toEqual([PLUGIN_LIST])
 })
 
+test('the teams to join are the ones teamrig serves: read at the start and once each READ_EVERY_MS, never at every look', async ($, on) => {
+  const { clock, readRuns } = await start(on, {}, { roots: {}, statuses: {} }, { USERPROFILE: HOME })
+  await $.session.start({ cwd: '/work', surface: 'terminal', isInteractive: true })
+  const pane = await $.ui.mount({ plugin: 'teamrig-pane', surface: 'terminal', component: 'Pane', requestId: 'teamrig-pane', props: WIDE })
+
+  expect(await pane.find({ text: /Install teamrig/ })).toBeUndefined()
+  expect(readRuns.length).toBe(1)
+  expect(readRuns[0]).toMatch(/^read config --json( |$)/)
+  expect(readRuns[0]).not.toMatch(/--session|--unless/)
+  await clock.advance(READ_EVERY_MS - POLL_MS)
+  expect(readRuns.length).toBe(1)
+  await clock.advance(POLL_MS)
+  expect(readRuns.length).toBe(2)
+  expect(await pane.find({ text: SETUP_HEAD })).toBeDefined()
+})
+
+test('with no teamrig to serve the teams, the step opens with installing it, whatever folders the kit home holds', async ($, on) => {
+  const { clock, disk, readRuns, runs } = await start(on, {}, { roots: {}, statuses: {}, isTeamrigMissing: true }, { USERPROFILE: HOME })
+  disk.write('/Homes/tester/.teamrig/teams/web/config.json', ['{}'])
+  await $.session.start({ cwd: '/work', surface: 'terminal', isInteractive: true })
+  const pane = await $.ui.mount({ plugin: 'teamrig-pane', surface: 'terminal', component: 'Pane', requestId: 'teamrig-pane', props: WIDE })
+
+  expect(await pane.find({ text: SETUP_HEAD })).toBeDefined()
+  expect(await pane.find({ text: /Install teamrig if it is not/ })).toBeDefined()
+  await clock.advance(READ_EVERY_MS)
+  expect(await pane.find({ text: /Install teamrig if it is not/ })).toBeDefined()
+  expect(readRuns).toEqual([])
+  expect(runs.filter(run => run.startsWith('teamrig '))).toEqual([])
+})
+
 test('a pane left minimized in a project teamrig is not set up for keeps its switch, and a press on it opens the steps alone', async ($, on) => {
   await start(on, { paneSize: 'minimized' }, { roots: {}, statuses: {} }, { USERPROFILE: HOME })
   await $.session.start({ cwd: '/work', surface: 'terminal', isInteractive: true })

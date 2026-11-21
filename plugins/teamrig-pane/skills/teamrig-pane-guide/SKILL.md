@@ -194,7 +194,8 @@ Set up a team: ask Claude here, or run /teamrig:team-setup. It proposes the sess
 The pane looks again every few seconds and lists the tasks once a team is found.
 ```
 
-With no team under the kit home, the step opens with installing teamrig: `Install teamrig if it is not (claude plugin
+When teamrig serves no team to join (`teamrig read config`, asked once a minute), which is also when it is not
+installed, the step opens with installing teamrig: `Install teamrig if it is not (claude plugin
 marketplace add GeneralA6/teamrig, then claude plugin install teamrig@teamrig), then set up a team: …`. The pane
 looks again every 3 s and shows the team's tasks, with the switch, Find and the mode buttons, once it finds one, with
 no restart. To help the user, ask what the team is for and run the team-setup skill only if they want a team. The pane
