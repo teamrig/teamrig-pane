@@ -242,6 +242,8 @@ describe('the fake teamrig read', () => {
     const teamrig = fakeRead(disk, () => NOW)
     const refusal = { exitCode: 2, stdout: '', stderr: 'REFUSED read serves tasks, inbox, sessions, config', isStdoutTruncated: false }
     expect(await teamrig(words('tasks goals'))).toEqual(refusal)
+    // Interface 1.1's document, which the pane knows by name: a 1.0 teamrig refuses the run it is asked in.
+    expect(await teamrig(words('tasks plan'))).toEqual(refusal)
     expect(await teamrig(['read', '--json'])).toEqual(refusal)
   })
 

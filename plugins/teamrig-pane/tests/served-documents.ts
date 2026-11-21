@@ -153,6 +153,37 @@ export function configDocument(revision: string, over: JsonRecord = {}): JsonRec
   }
 }
 
+/** An active task as interface 1.1's `plan` places it: ready, unranked by any goal, needing and needed by nothing, its owner's to work. */
+export function planned(id: string, over: JsonRecord = {}): JsonRecord {
+  return {
+    id,
+    parked: false,
+    pinned: false,
+    band: 3,
+    ready: true,
+    score: 18,
+    started: false,
+    due: null,
+    unblocks: null,
+    inWeek: false,
+    size: null,
+    costOfDelay: 45,
+    sizePct: 2.5,
+    workClass: 'Improvements',
+    goal: null,
+    prep: false,
+    needs: [],
+    neededBy: [],
+    next: { kind: 'work', who: 'api', task: id, behind: null },
+    ...over,
+  }
+}
+
+/** The `plan` document for `tasks`, in the order given, which is their rank. */
+export function planDocument(revision: string, tasks: readonly JsonRecord[], over: JsonRecord = {}): JsonRecord {
+  return { interface: '1.1', document: 'plan', revision, problems: [], at: new Date(NOW).toISOString(), validUntil: null, week: null, tasks, finished: [], ...over }
+}
+
 /** One run as the fake teamrig was asked it. */
 export type Asked = { documents: readonly string[]; session: string | null; unless: string | null; conversation: string | null }
 

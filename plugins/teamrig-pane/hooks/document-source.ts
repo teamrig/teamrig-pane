@@ -11,6 +11,7 @@ import type { BodyRead } from './document-fields'
 import { isHeldFinished } from './done'
 import { inboxShown } from './inbox'
 import { inboxOf, type InboxRead } from './inbox-document'
+import { planOf } from './plan-document'
 import type { DocumentName, ReadDocument } from './read-document'
 import { readDocuments, type ReadPorts } from './read-port'
 import { nameOf, leadsOf } from './session-roster'
@@ -117,6 +118,7 @@ export class DocumentSource implements SnapshotSource {
   private readonly inbox = new Held(inboxOf)
   private readonly sessions = new Held(sessionsOf)
   private readonly config = new Held(configOf)
+  private readonly plan = new Held(planOf)
   private readonly held: Readonly<Record<DocumentName, { take(document: ReadDocument): void }>>
   /** The file source's last snapshot: a poll of it answers null while nothing it reads moved. */
   private base: Snapshot | null = null
@@ -129,7 +131,7 @@ export class DocumentSource implements SnapshotSource {
     this.files = files
     this.cli = cli
     this.ports = ports
-    this.held = { tasks: this.tasks, inbox: this.inbox, sessions: this.sessions, config: this.config }
+    this.held = { tasks: this.tasks, inbox: this.inbox, sessions: this.sessions, config: this.config, plan: this.plan }
   }
 
   /** The sessions document last read, for a caller that looks a session up by a typed word; null before one is. */
@@ -203,6 +205,7 @@ export class DocumentSource implements SnapshotSource {
     if (name === 'tasks') return this.tasks.revision
     if (name === 'sessions') return this.sessions.revision
     if (name === 'config') return this.config.revision
+    if (name === 'plan') return this.plan.revision
     return this.inbox.value !== null && this.inbox.value.session.id === session ? this.inbox.revision : null
   }
 

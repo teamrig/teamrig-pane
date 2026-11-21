@@ -64,7 +64,7 @@ export function leftOutLine(what: string, left: readonly string[]): string {
 const MOMENT = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$/
 
 /** The milliseconds of a served moment; null for a text of another shape, or a day or hour no calendar holds. */
-function momentOf(text: string): number | null {
+export function momentOf(text: string): number | null {
   const at = MOMENT.test(text) ? Date.parse(text) : Number.NaN
   return Number.isNaN(at) ? null : at
 }
