@@ -1,9 +1,10 @@
 import { describe, expect, test } from 'claude-code/testing'
 import type { Snapshot, TaskRow } from '../types'
-import { priorityText, readMarks, readRegister, showStored, waitsText, type TaskTree } from '../hooks/core/read/index'
+import { priorityText, readMarks, readRegister, showStored, waitsText } from '../hooks/core/read/index'
 import { rowOf } from '../hooks/log'
-import { rankWords, treeOf, whenWords, type PaneTree } from '../hooks/meta'
+import { rankWords, whenWords } from '../hooks/meta'
 import { findPlaces } from '../hooks/places'
+import { treeOf, type PlanTree } from '../hooks/plan-tree'
 import { paneBlocks, type Block } from '../hooks/rows'
 import { registerPaths, skippedText, TaskRegisterSource } from '../hooks/source'
 import { TreeGoals } from '../hooks/tree-goals'
@@ -23,7 +24,9 @@ import {
   type GoldenRegister,
 } from '../scripts/golden-format'
 import { MemoryFiles } from './fixtures'
+import { foldTreeOf } from './fold-tree'
 import { GOLDEN } from './golden-register'
+import { withPlan } from './served-plan'
 
 // The pane against what the real teamrig CLI wrote and printed at the pinned commit (scripts/golden.ts).
 
@@ -33,33 +36,35 @@ const PATHS = registerPaths({ tasksDir: `${KIT}/teams/demo/state`, inboxDir: `${
 
 /**
  * A row in the words of `teamrig list --all` (formatTask, src/register/views.ts): each fact it prints, from the pane's
- * row and the tree of the rows read with it, each stored time in the tree's zone (showStored): a due a task takes from a task that needs it reads `due 10-20 (from T4)`,
- * and an active task another session's task needs ends `· needed by T8 (beta, due 10-22)` (neededByText), the due
- * left out when the row's own `(from T8)` names it.
+ * row and the plan teamrig serves of the rows read with it (the pane's tree, hooks/plan-tree.ts), each stored time in
+ * the tree's zone (showStored): a due a task takes from a task that needs it reads `due 10-20 (from T4)`, and an
+ * active task another session's task needs ends `· needed by T8 (beta, due 10-22)` (neededByText), the due left out
+ * when the row's own `(from T8)` names it.
  */
-function listLine(row: TaskRow, tree: PaneTree): string {
+function listLine(row: TaskRow, tree: PlanTree): string {
+  const { zone } = tree.context
   const rank = rankWords(row, tree)
   const ranked = rank === null ? [] : [rank.workClass, ...(rank.score === null ? [] : [`score ${rank.score}`])]
   const parts = [`${row.id} ${row.status}`, ...ranked, priorityText(row.priority), `owner ${row.owner}`]
-  const due = tree.effectiveDue(row.id)
-  if (due !== undefined && due.from !== null) parts.push(`due ${showStored(due.due, tree.zone)} (from ${due.from})`)
-  else if (row.due !== null) parts.push(`due ${showStored(row.due, tree.zone)}`)
+  const due = tree.effectiveDue(row)
+  if (due !== undefined && due.from !== null) parts.push(`due ${showStored(due.due, zone)} (from ${due.from})`)
+  else if (row.due !== null) parts.push(`due ${showStored(row.due, zone)}`)
   if (row.after.length > 0) parts.push(`after ${row.after.join(',')}`)
-  if (row.week !== null) parts.push(`week ${showStored(row.week, tree.zone)}`)
+  if (row.week !== null) parts.push(`week ${showStored(row.week, zone)}`)
   parts.push(`from ${row.source}`)
   if (row.goals.length > 0) parts.push(`goals ${row.goals.join(',')}`)
-  const said = row.status === 'waiting' ? [row.waits.length > 0 ? waitsText(row.waits, tree.zone, tree.context) : null, row.note].filter(part => part !== null) : []
+  const said = row.status === 'waiting' ? [row.waits.length > 0 ? waitsText(row.waits, zone, tree.context) : null, row.note].filter(part => part !== null) : []
   const waiting = said.length > 0 ? ` (waiting: ${said.join('; ')})` : ''
   return `${parts.join(', ')} | ${row.title}${waiting}${neededBy(row, tree)}`
 }
 
 /** ` · needed by T8 (beta, due 10-22) +1`, as listLine's row ends; empty when no other session's task needs it. */
-function neededBy(row: TaskRow, tree: TaskTree<TaskRow>): string {
+function neededBy(row: TaskRow, tree: PlanTree): string {
   const [first, ...rest] = tree.neededByOthers(row.id)
   if (first === undefined) return ''
-  const due = tree.effectiveDue(first.id)
-  const shown = due !== undefined && tree.effectiveDue(row.id)?.from === (due.from ?? first.id)
-  const facts = due === undefined || shown ? [first.owner] : [first.owner, `due ${showStored(due.due, tree.zone)}`]
+  const due = first.due
+  const shown = due !== null && tree.effectiveDue(row)?.from === (due.from ?? first.id)
+  const facts = due === null || shown ? [first.owner] : [first.owner, `due ${showStored(due.due, tree.context.zone)}`]
   return ` · needed by ${first.id} (${facts.join(', ')})${rest.length > 0 ? ` +${rest.length}` : ''}`
 }
 
@@ -127,11 +132,12 @@ describe('golden', () => {
     expect(snap.timeZone).toBe(GOLDEN_TIME_ZONE)
     // The lead's T1 that team create opens, and alpha's and beta's seven.
     expect(linesOf(GOLDEN.list).length).toBe(8)
-    const tree = treeOf(snap)
+    const tree = treeOf(withPlan(snap))
     expect(snap.tasks.map(row => listLine(row, tree)).sort()).toEqual(linesOf(GOLDEN.list))
-    // teamrig printed them in plan order: fed the same rows, the pane's tree must rank them the same.
+    // teamrig printed them in plan order: fed the same rows, the tree the fake teamrig serves its plan from must
+    // rank them the same.
     const printed = GOLDEN.list.split('\n').filter(line => line !== '').map(line => line.split(' ')[0])
-    expect(tree.inPlanOrder(snap.tasks).map(row => row.id)).toEqual(printed)
+    expect(foldTreeOf(snap).inPlanOrder(snap.tasks).map(row => row.id)).toEqual(printed)
     expect(`WARN ${snap.problem}`).toBe(warnOf(GOLDEN.warn))
   })
 
@@ -142,7 +148,8 @@ describe('golden', () => {
   })
 
   test('draws its rows from what teamrig wrote: a waiting task\'s typed reasons and note, an open one\'s unfinished after', async () => {
-    const snap = await paneSnapshot(goldenFiles())
+    // The golden files hold no served plan, so the rows draw from the one the fake teamrig serves for these tasks.
+    const snap = withPlan(await paneSnapshot(goldenFiles()))
     const blocks = paneBlocks(snap, 'mine')
     // Since when T2 works and T3 waits is the moment the capture ran.
     const since = (id: string) => whenWords(snap.tasks.find(task => task.id === id)?.statusAt ?? '', clockOf(snap))
@@ -176,7 +183,7 @@ describe('golden', () => {
     for (const fixture of GOLDEN.fixtures) {
       const register = readRegister(fixture.events)
       const rows = [...register.state.tasks.values()].map(task => rowOf(task))
-      const tree = treeOf({ tasks: rows, elsewhere: [], now: GOLDEN.generatedAt, notPickedUpAfterHours, timeZone, leads, focus, ownerSource, goals, spend })
+      const tree = treeOf(withPlan({ tasks: rows, elsewhere: [], now: GOLDEN.generatedAt, notPickedUpAfterHours, timeZone, leads, focus, ownerSource, goals, spend }))
       const lines = rows.map(row => listLine(row, tree)).sort()
       expect({ fixture: fixture.name, lines }).toEqual({ fixture: fixture.name, lines: linesOf(fixture.list) })
       const skipped = skippedText(PATHS, register, readMarks(''))

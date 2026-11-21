@@ -10,7 +10,8 @@ import { actRows, type CardActs } from './act-rows'
 import { cardRows, GUIDE } from './card'
 import type { StatsRange } from './core/read/index'
 import { teamSessions } from './leads'
-import { metaParts, treeOf, whenWords, type PaneTree } from './meta'
+import { metaParts, whenWords } from './meta'
+import { treeOf, type PlanTree } from './plan-tree'
 import { BAR_LOOK } from './status-bar'
 import type { Tone } from './tone'
 import { areaView, ownerGroups, statusLines } from './view'
@@ -220,7 +221,7 @@ export function single(key: string, spans: Span[], hang?: Span): Block {
 }
 
 /** The meta line's parts (meta.ts) between dim dots, each dim unless a color says it needs a look. */
-function metaSpans(task: TaskRow, tree: PaneTree, viewer: string | null): Span[] {
+function metaSpans(task: TaskRow, tree: PlanTree, viewer: string | null): Span[] {
   return metaParts(task, tree, viewer).flatMap((part, i) => {
     const span: Span = part.color === undefined ? { text: part.text, dim: true } : part
     return i === 0 ? [span] : [SEPARATOR, span]
@@ -251,7 +252,7 @@ export function titleRow(key: string, task: Titled, maxLines?: number): Row {
  * (act-rows.ts, drawn from `acts`) at its bottom. `tree` is the snapshot's (meta.ts treeOf); `viewer` is the area
  * whose list it is (null in the all view): a task it does not own says whose it is.
  */
-function taskBlock(section: string, task: TaskRow, expanded: ExpandedTasks, tree: PaneTree, viewer: string | null, acts: CardActs | null): Block {
+function taskBlock(section: string, task: TaskRow, expanded: ExpandedTasks, tree: PlanTree, viewer: string | null, acts: CardActs | null): Block {
   const detail = expanded[task.id]
   const indent = indentOf(task)
   const key = taskKey(section, task.id)
@@ -265,7 +266,7 @@ function taskBlock(section: string, task: TaskRow, expanded: ExpandedTasks, tree
  * `✓ T4  title          14:02`: a task done or dropped today, dim, on one line with when it closed; with its card
  * open (card.ts), the title shows whole and the card follows. `tree` as taskBlock takes it.
  */
-function doneBlock(task: TaskRow, expanded: ExpandedTasks, tree: PaneTree): Block {
+function doneBlock(task: TaskRow, expanded: ExpandedTasks, tree: PlanTree): Block {
   const detail = expanded[task.id]
   const key = `done:${task.id}`
   const color = GLYPH_COLOR[task.status]

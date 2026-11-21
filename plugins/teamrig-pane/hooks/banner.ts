@@ -14,10 +14,9 @@
 // that layout.ts wraps and register.tsx draws, and the row the button's page goes back to.
 import type { BarStatus, LogConversation, Snapshot, TaskDetail, TaskRow, ViewMode } from '../types'
 import { cardRows, type CardField } from './card'
-import type { TaskTree } from './core/read/index'
 import { conversationWhen } from './log-rows'
 import { openingSpan, titleSpans, workedTitles, type Worked } from './log-title'
-import type { PaneTree } from './meta'
+import type { PlanTree } from './plan-tree'
 import { SEPARATOR, indentOf, listHeadingKey, listRowKey, titleRow, type Block, type Row, type Span } from './rows'
 import { newestFirst } from './view'
 import { cells } from './width'
@@ -73,7 +72,7 @@ const UNREAD: TaskDetail = { ref: null, quotes: [], goals: [] }
 export type Current = { readonly kind: 'now' | 'next'; readonly task: TaskRow }
 
 /** The area's task in progress that took its status last, else its first open task in plan order on `tree`; null for none or no area. */
-export function currentTask(snap: Snapshot, tree: TaskTree<TaskRow>): Current | null {
+export function currentTask(snap: Snapshot, tree: PlanTree): Current | null {
   const own = snap.tasks.filter(task => snap.area !== null && task.owner === snap.area)
   const working = own.filter(task => task.status === 'in-progress').sort(newestFirst)[0]
   if (working !== undefined) return { kind: 'now', task: working }
@@ -115,7 +114,7 @@ export function lookShowing(current: Current, mode: ViewMode, look: ListLook): L
  * sessionName), so the band says whose session it is while the pane's body scrolls. `tree` is the snapshot's (meta.ts
  * treeOf); the band draws none for a session with no area.
  */
-export function bannerBlock(current: Current | null, isOpen: boolean, tree: PaneTree, name: string): Block {
+export function bannerBlock(current: Current | null, isOpen: boolean, tree: PlanTree, name: string): Block {
   const lead: Span[] = [{ text: name, bold: true }, SEPARATOR]
   if (current === null) return { key: BANNER_KEY, rows: [{ key: BANNER_KEY, spans: [...lead, { text: NOTHING_CURRENT, dim: true }] }] }
   const { task } = current

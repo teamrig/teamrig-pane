@@ -1,14 +1,16 @@
 // The `plan` document as the fake teamrig serves it (tests/fake-read.ts): the body interface 1.1 builds in teamrig's
-// src/interface/plan.ts, field for field, from the pane's fold of the register and the tree the pane itself reads
-// that fold with (hooks/meta.ts), so a whole-pane spec's plan says what the pane's own tree says of the same files.
-// It serves every session's tasks (the pane passes no `--owner`) and leaves out `at`, the clock, which the fake adds
-// after it has taken the revision: teamrig's revision covers the files and never the clock.
+// src/interface/plan.ts, field for field, from a fold of the register and teamrig's own tree over that fold
+// (fold-tree.ts), so a whole-pane spec's plan says what `teamrig list` says of the same files. It serves every
+// session's tasks (the pane passes no `--owner`) and leaves out `at`, the clock, which the fake adds after it has
+// taken the revision: teamrig's revision covers the files and never the clock. A spec with no fake teamrig reads the
+// same plan through the pane's own reader (planReadOf, withPlan).
 import { MS_PER_DAY, parseDeadline } from '../hooks/core/core/time'
-import { ACTIVE_STATUSES, taskNumber, type NextMove } from '../hooks/core/read/index'
+import { ACTIVE_STATUSES, taskNumber, type NextMove, type TaskTree } from '../hooks/core/read/index'
 import { planBand, type PlanPlace } from '../hooks/core/register/tree'
-import { treeOf, type PaneTree } from '../hooks/meta'
-import type { JsonRecord } from '../hooks/read-document'
-import type { Snapshot, TaskRow } from '../types'
+import { planOf, type PlanRead } from '../hooks/plan-document'
+import { parseDocument, type JsonRecord } from '../hooks/read-document'
+import type { TaskRow } from '../types'
+import { foldTreeOf, type FoldSource } from './fold-tree'
 
 /** The settings whose days turn an answer of the plan with no file moving (`focus.score.dueSoonDays`, `focus.parkAfterDays`). */
 type PlanTurns = { readonly dueSoonDays: number; readonly parkAfterDays: number }
@@ -23,19 +25,19 @@ function rankedOf(place: PlanPlace): NonNullable<PlanPlace['ranked']> {
   return place.ranked
 }
 
-function servedDue(id: string, tree: PaneTree): JsonRecord | null {
+function servedDue(id: string, tree: TaskTree<TaskRow>): JsonRecord | null {
   const due = tree.effectiveDue(id)
   return due === undefined ? null : { due: due.due, at: new Date(due.at).toISOString(), from: due.from }
 }
 
-function servedNeed(id: string, tree: PaneTree): JsonRecord {
+function servedNeed(id: string, tree: TaskTree<TaskRow>): JsonRecord {
   const own = tree.task(id)
   if (own !== undefined) return { id, team: null, owner: own.owner, status: own.status }
   const away = tree.elsewhereOf(id)
   return away === undefined ? { id, team: null, owner: null, status: null } : { id, team: away.team, owner: away.task.owner, status: away.task.status }
 }
 
-function servedMove(move: NextMove<TaskRow>, tree: PaneTree): JsonRecord {
+function servedMove(move: NextMove<TaskRow>, tree: TaskTree<TaskRow>): JsonRecord {
   switch (move.kind) {
     case 'elsewhere':
       return { kind: 'elsewhere', who: move.who, task: move.task.id, team: move.team, need: move.need.id }
@@ -46,7 +48,7 @@ function servedMove(move: NextMove<TaskRow>, tree: PaneTree): JsonRecord {
   }
 }
 
-function plannedTask(task: TaskRow, tree: PaneTree): JsonRecord {
+function plannedTask(task: TaskRow, tree: TaskTree<TaskRow>): JsonRecord {
   const place = tree.placeOf(task)
   const ranked = rankedOf(place)
   const move = tree.nextMove(task.id)
@@ -77,7 +79,7 @@ function plannedTask(task: TaskRow, tree: PaneTree): JsonRecord {
  * The moments one task's answers may turn at with no file moving: its effective due and the day that due comes near,
  * each time it waits until, and for an open task the day the park rule may take it.
  */
-function turnsOf(task: TaskRow, tree: PaneTree, turns: PlanTurns): number[] {
+function turnsOf(task: TaskRow, tree: TaskTree<TaskRow>, turns: PlanTurns): number[] {
   const due = tree.dueTime(task)
   const waits = task.waits.flatMap(reason => (reason.kind === 'time' ? [parseDeadline(reason.at, tree.zone)?.getTime() ?? Number.NaN] : []))
   const park = task.status === 'open' ? [Date.parse(task.updatedAt) + turns.parkAfterDays * MS_PER_DAY] : []
@@ -88,8 +90,8 @@ function turnsOf(task: TaskRow, tree: PaneTree, turns: PlanTurns): number[] {
  * The `plan` document's body for the fold's register at the fold's clock, without `at`: the active tasks in plan
  * order, each as the tree places it, then the finished ones the fold still holds, by number, with their work class.
  */
-export function servedPlan(fold: Snapshot): JsonRecord {
-  const tree = treeOf(fold)
+export function servedPlan(fold: FoldSource): JsonRecord {
+  const tree = foldTreeOf(fold)
   const turns = { dueSoonDays: fold.focus.score.dueSoonDays, parkAfterDays: fold.focus.parkAfterDays }
   const active = tree.inPlanOrder(fold.tasks.filter(isActive))
   const ahead = active.flatMap(task => turnsOf(task, tree, turns)).filter(at => at > fold.now)
@@ -102,4 +104,18 @@ export function servedPlan(fold: Snapshot): JsonRecord {
       .sort((a, b) => taskNumber(a.id) - taskNumber(b.id))
       .map(task => ({ id: task.id, workClass: rankedOf(tree.placeOf(task)).workClass })),
   }
+}
+
+/** The fold's plan as the pane reads it off teamrig: servedPlan in interface 1.1's envelope, through the pane's readers. */
+export function planReadOf(fold: FoldSource): PlanRead {
+  const read = parseDocument({ interface: '1.1', document: 'plan', revision: 'fold', problems: [], at: new Date(fold.now).toISOString(), ...servedPlan(fold) })
+  if (read.kind !== 'document') throw new Error(`the served plan is no document: ${read.kind}`)
+  const plan = planOf(read.document)
+  if (plan.kind !== 'read') throw new Error(`the served plan cannot be read: ${plan.reason}`)
+  return plan.value
+}
+
+/** The fold as a snapshot holds it once teamrig served its plan. */
+export function withPlan<S extends FoldSource>(fold: S): S & { readonly plan: PlanRead } {
+  return { ...fold, plan: planReadOf(fold) }
 }

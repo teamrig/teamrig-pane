@@ -3,12 +3,13 @@ import { formatTasksWeek } from '../hooks/core/budget/task-week-summary'
 import { DEFAULT_FOCUS, DEFAULT_REGISTER, EVENT_VERSION, MARK_VERSION, TimeZone } from '../hooks/core/read/index'
 import { GOAL_RECORD_VERSION } from '../hooks/core/register/goals'
 import { lineHash } from '../hooks/line-hash'
-import { treeOf, type PaneTree } from '../hooks/meta'
+import { treeOf, type PlanTree } from '../hooks/plan-tree'
 import { NO_SPEND } from '../hooks/ranking'
 import type { FileStamp, Files, GoalSource } from '../hooks/source'
 import { NO_TASK_COUNTS } from '../hooks/task-counts'
 import { zoneNamed, type Clock } from '../hooks/zone'
 import type { DrawnSettings, GoalRanks, Snapshot, TaskElsewhere, TaskRow, TaskSpend, TeamLeads, TeamSettings, WaitRow } from '../types'
+import { withPlan } from './served-plan'
 
 export const NOW = Date.UTC(2026, 9, 13, 14, 0)
 export const HOUR = 3_600_000
@@ -94,8 +95,9 @@ export const INBOX_LINES: readonly string[] = [
 export const INBOX_UNREAD_FROM = 3
 
 /**
- * The tree of `tasks` at `now`, for a team whose config sets `notPickedUpAfterHours` (teamrig's default when unset)
- * and the zone named `timeZone` (UTC unless given), with `leads`, `goals` and `spend` (none read unless given).
+ * The tree of `tasks` at `now` as the pane holds it once teamrig served their plan (served-plan.ts), for a team whose
+ * config sets `notPickedUpAfterHours` (teamrig's default when unset) and the zone named `timeZone` (UTC unless
+ * given), with `leads`, `goals` and `spend` (none read unless given).
  */
 export function treeAt(
   tasks: readonly TaskRow[],
@@ -106,8 +108,8 @@ export function treeAt(
   goals: GoalRanks = {},
   spend: TaskSpend = NO_SPEND,
   elsewhere: readonly TaskElsewhere[] = [],
-): PaneTree {
-  return treeOf({ tasks, elsewhere, now, notPickedUpAfterHours, timeZone, leads, focus: DEFAULT_FOCUS, ownerSource: DEFAULT_REGISTER.ownerSource, goals, spend })
+): PlanTree {
+  return treeOf(withPlan({ tasks, elsewhere, now, notPickedUpAfterHours, timeZone, leads, focus: DEFAULT_FOCUS, ownerSource: DEFAULT_REGISTER.ownerSource, goals, spend }))
 }
 
 /** The clock at `now` in `zone`, UTC unless given. */

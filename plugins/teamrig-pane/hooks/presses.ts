@@ -13,7 +13,7 @@ import { unreadLine } from './file-page'
 import { fieldAnew, fieldKey } from './find-field'
 import { logResultKey, searchLog } from './log-search'
 import type { Worked } from './log-title'
-import { treeOf, type TreeSource } from './meta'
+import { treeOf, type PlanSource } from './plan-tree'
 import { fromList, leavingList, pushed, reset } from './nav'
 import { NO_STATS_LIST } from './pane-state'
 import type { PaneStore } from './pane-store'
@@ -245,7 +245,7 @@ export async function closeLog(store: PaneStore, logging: ClosesLog | null): Pro
  * one it opens that page and moves the ring onto the page's back step: left in the field, a new round's and empty,
  * it would type the next keys into a new search, so b, f and s would never answer.
  */
-export async function submitTasks(store: PaneStore, snap: TreeSource, query: string, focus: MoveFocus, detailOf: ReadsDetail): Promise<void> {
+export async function submitTasks(store: PaneStore, snap: PlanSource, query: string, focus: MoveFocus, detailOf: ReadsDetail): Promise<void> {
   const results = searchTasks(snap.tasks, query, treeOf(snap))
   const top = topResult(results)
   if (top === null) return

@@ -7,7 +7,8 @@ import { EVENT_VERSION, indexMarks, readMarks, readRegister, TASK_STATUSES } fro
 import { ANSWER_CONTRACT_MATCHES, DECISION_CONTRACT_MATCHES, FOCUS_CONTRACT_MATCHES, ITEM_TYPE_CONTRACT_MATCHES, rowOf, SPEND_CONTRACT_MATCHES, STATUS_CONTRACT_MATCHES } from '../hooks/log'
 import { cardParts, dockLayout, failedDrawing, inlineLayout, merged, piecesOf, rowParts, wrapRow, type Drawn } from '../hooks/layout'
 import { GLYPH, GLYPH_COLOR, NOTHING_EXPANDED, moreText, noneActiveText, noSessionBlock, paneBlocks, statsPressKey, type Block, type Row, type Span } from '../hooks/rows'
-import { metaText, treeOf } from '../hooks/meta'
+import { metaText } from '../hooks/meta'
+import { treeOf } from '../hooks/plan-tree'
 import { NO_SPEND } from '../hooks/ranking'
 import { barCounts } from '../hooks/status-bar'
 import { cells, graphemes } from '../hooks/width'
@@ -16,6 +17,8 @@ import { areaView, MAX_FINISHED, ownerGroups, sameView } from '../hooks/view'
 import { HELD_DAYS } from '../hooks/done'
 import type { TeamFiles } from '../hooks/places'
 import { HOUR, LIKE_MEDIANS, MemoryFiles, NOT_PICKED_UP_HOURS, NOW, NO_TEAM, NO_TREE_GOALS, S1, S2, S3, SNAPSHOT_SETTINGS, TEAM_SETTINGS, approveLine, bigRegister, clockAt, createLine, decideLine, iso, markLine, statusLine, tasksWeekText, treeAt, updateLine, waitingLine, verifyingLine } from './fixtures'
+import { foldTreeOf } from './fold-tree'
+import { planReadOf, withPlan } from './served-plan'
 
 const DAY = 24 * HOUR
 
@@ -234,7 +237,7 @@ describe('log', () => {
     expect(decided?.decided).toEqual({ by: 'lead', at: iso(NOW), note: 'the short one' })
     expect([asked?.answer, asked?.decided]).toEqual([null, null])
     // Core register/can-move.ts: an answered approval, either way, and a decided card hold the task no longer.
-    const tree = treeAt(tasks, NOW)
+    const tree = foldTreeOf({ tasks, now: NOW, ...NO_TEAM, ...SNAPSHOT_SETTINGS })
     expect(tasks.map(t => tree.placeOf(t).blocked)).toEqual([false, false, false, true])
   })
 
@@ -332,7 +335,7 @@ describe('view', () => {
     const { focus, ownerSource } = SNAPSHOT_SETTINGS
     const unordered = { ...focus, expedite: { ...focus.expedite, ownerP1: false }, score: { ...focus.score, ownerOrderValues: [] } }
     const upNext = (settings: Pick<Snapshot, 'focus' | 'ownerSource'>) =>
-      areaView(tasks, 'po', treeOf({ tasks, now: NOW, ...NO_TEAM, ...SNAPSHOT_SETTINGS, ...settings })).upNext.map(t => t.id)
+      areaView(tasks, 'po', treeOf(withPlan({ tasks, now: NOW, ...NO_TEAM, ...SNAPSHOT_SETTINGS, ...settings }))).upNext.map(t => t.id)
     expect(upNext({ focus, ownerSource })).toEqual(['T2', 'T1'])
     expect(upNext({ focus: unordered, ownerSource })).toEqual(['T1', 'T2'])
     expect(upNext({ focus, ownerSource: 'boss' })).toEqual(['T1', 'T2'])
@@ -448,15 +451,18 @@ describe('view', () => {
     const late: Snapshot = { ...base, tasks: done, now: Date.UTC(2026, 9, 13, 23, 58) }
     expect(sameView(late, { ...late, now: Date.UTC(2026, 9, 13, 23, 59) })).toBe(true)
     expect(sameView(late, { ...late, now: Date.UTC(2026, 9, 14, 0, 1) })).toBe(false)
-    // The clock alone parks a quiet task, 14 days after its last change: the tick across that line redraws, one before it
-    // does not. The later update keeps the status's own age words from turning over on the same tick, so the park alone decides.
+    // teamrig parks a quiet task 14 days after its last change, and the pane parks it only once a plan says so: a tick
+    // across that line draws the same pane, the plan read past it (its validUntil) redraws. The later update keeps the
+    // status's own age words from turning over on the same tick, so the park alone decides.
     const parksSoon = fold(
       createLine('T1', { owner: 'po', by: 'lead', at: NOW - 20 * DAY - 6 * HOUR, source: 'lead', taskKeys: { workClass: 'Improvements' } }),
       updateLine('T1', 'lead', NOW - 14 * DAY + 60_000, { priority: 3 }, 'reprioritized'),
     )
-    const quiet: Snapshot = { ...base, tasks: parksSoon }
-    expect(sameView(quiet, { ...quiet, now: NOW + 30_000 })).toBe(true)
-    expect(sameView(quiet, { ...quiet, now: NOW + 120_000 })).toBe(false)
+    const quiet = withPlan({ ...base, tasks: parksSoon })
+    const parked = planReadOf({ ...quiet, now: NOW + 120_000 })
+    expect([quiet.plan.tasks[0]?.parked, parked.tasks[0]?.parked]).toEqual([false, true])
+    expect(sameView(quiet, { ...quiet, now: NOW + 120_000 })).toBe(true)
+    expect(sameView(quiet, { ...quiet, plan: { ...quiet.plan, tasks: parked.tasks } })).toBe(false)
     // An open task's card says since when it is open, which its meta line leaves out: `14:00 UTC` that day, `Tue 10-13` from the zone's midnight on.
     const opened: Snapshot = { ...base, tasks: fold(createLine('T1', { owner: 'po', by: 'po', at: NOW })), now: Date.UTC(2026, 9, 13, 23, 58) }
     expect(sameView(opened, { ...opened, now: Date.UTC(2026, 9, 13, 23, 59) })).toBe(true)
@@ -536,7 +542,7 @@ describe('rows', () => {
       createLine('T3', { owner: 'po', by: 'po', at: NOW - HOUR, source: 'po', title: 'Old work' }),
       statusLine('T3', 'po', NOW, 'done'),
     )
-    const blocks = paneBlocks(snapshotOf(tasks, 'po'), 'mine')
+    const blocks = paneBlocks(withPlan(snapshotOf(tasks, 'po')), 'mine')
     expect(blocks.map(b => b.key)).toEqual(['header', 'next', 'next:T1', 'waiting', 'waiting:T2', 'done', 'done:T3'])
     expect(textAt(blocks, 'header')).toBe('2 active')
     expect(rowAt(blocks, 'header')?.rule).toBe(true)

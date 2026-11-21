@@ -16,7 +16,7 @@ import { rowOf } from '../hooks/log'
 import { logListBlocks, logPageBlocks, logPageTitle } from '../hooks/log-rows'
 import { searchLog } from '../hooks/log-search'
 import { meetingsBlocks } from '../hooks/meetings-rows'
-import { treeOf as goalTreeOf } from '../hooks/meta'
+import { treeOf as planTreeOf } from '../hooks/plan-tree'
 import { AT_LIST, KEYS_PAGE, doneAt, fromList, pushed, searched } from '../hooks/nav'
 import { NoteHold } from '../hooks/note-hold'
 import { pageBlocks } from '../hooks/page'
@@ -166,7 +166,7 @@ describe('the tasks view', () => {
   })
 
   test('a search shows the tasks it matched, read once for the body and the field', async () => {
-    const found = searchTasks(SNAP.tasks, 'feed', goalTreeOf(SNAP))
+    const found = searchTasks(SNAP.tasks, 'feed', planTreeOf(SNAP))
     const screen = await screenOf(from({ nav: SEARCH('feed'), findField: { round: 1, text: 'feed' } }), look())
     expect(screen.found).toEqual(found)
     expect(screen.field).toEqual({ round: 1, text: 'feed' })

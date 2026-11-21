@@ -7,7 +7,7 @@ import type { PageDetails, Snapshot } from '../types'
 import { actRows, type CardActs } from './act-rows'
 import { cardRows } from './card'
 import { HELD_DAYS } from './done'
-import { treeOf } from './meta'
+import { treeOf } from './plan-tree'
 import { problemBlocks, readingBlock, single, titleRow, type Block } from './rows'
 
 /**

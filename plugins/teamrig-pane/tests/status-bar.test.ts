@@ -21,6 +21,7 @@ import { statusLines } from '../hooks/view'
 import { cells } from '../hooks/width'
 import { dayOf } from '../hooks/zone'
 import { HOUR, JERUSALEM, NOW, NO_TEAM, SNAPSHOT_SETTINGS, clockAt, createLine, statusLine, treeAt, updateLine } from './fixtures'
+import { withPlan } from './served-plan'
 
 const DAY = 24 * HOUR
 /** The start of NOW's UTC day. */
@@ -40,17 +41,19 @@ function rowsOf(...lines: string[]): TaskRow[] {
   return [...readRegister(lines.join('\n')).state.tasks.values()].map(task => rowOf(task))
 }
 
-const snapshotOf = (tasks: TaskRow[], area: string | null, now = NOW): Snapshot => ({
-  tasks,
-  area,
-  areaSource: 'inbox-read',
-  unreadInbox: 0,
-  inbox: [],
-  problem: null,
-  ...NO_TEAM,
-  ...SNAPSHOT_SETTINGS,
-  now,
-})
+/** A snapshot of `tasks` holding the plan teamrig serves for them: what parks a task and orders a list. */
+const snapshotOf = (tasks: TaskRow[], area: string | null, now = NOW): Snapshot =>
+  withPlan({
+    tasks,
+    area,
+    areaSource: 'inbox-read',
+    unreadInbox: 0,
+    inbox: [],
+    problem: null,
+    ...NO_TEAM,
+    ...SNAPSHOT_SETTINGS,
+    now,
+  })
 
 const textOf = (line: readonly BarPiece[] | undefined) => (line ?? []).map(piece => piece.text).join('')
 /** A line as the terminal draws it: each count behind its key. */

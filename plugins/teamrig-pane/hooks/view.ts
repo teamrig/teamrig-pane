@@ -1,10 +1,11 @@
 // What the pane shows, as plain data: pure functions over the folded tasks, so the drawing in
 // register.tsx only lays them out. The order and the due are teamrig's own: plan order on the effective due, read
-// from the snapshot's dependency tree (meta.ts treeOf, core register/tree.ts).
+// from the plan the snapshot carries (plan-tree.ts treeOf).
 import type { BarStatus, Snapshot, TaskRow } from '../types'
-import { ACTIVE_STATUSES, type TaskTree } from './core/read/index'
+import { ACTIVE_STATUSES } from './core/read/index'
 import { sameLeads } from './leads'
-import { listedTasks, metaText, treeOf, whenWords, type PaneTree } from './meta'
+import { listedTasks, metaText, whenWords } from './meta'
+import { treeOf, type PlanTree } from './plan-tree'
 import { inboxShown } from './inbox'
 import { barCounts, barStatusOf, isFinishedOn, type BarCounts } from './status-bar'
 import { clockOf, dayOf, momentWords } from './zone'
@@ -54,7 +55,7 @@ export function isVerifying(task: TaskRow): boolean {
 }
 
 /** Verifying first, the ones to close, then teamrig's plan order on `tree`'s effective dues. */
-function verifyingFirst(tree: TaskTree<TaskRow>): (a: TaskRow, b: TaskRow) => number {
+function verifyingFirst(tree: PlanTree): (a: TaskRow, b: TaskRow) => number {
   return (a, b) => Number(isVerifying(b)) - Number(isVerifying(a)) || tree.byPlanOrder(a, b)
 }
 
@@ -67,7 +68,7 @@ export function newestFirst(a: TaskRow, b: TaskRow): number {
  * The area's view of `tasks`, `tree` the dependency tree read over them (meta.ts treeOf), today its clock's day in the
  * team's zone.
  */
-export function areaView(tasks: readonly TaskRow[], area: string, tree: TaskTree<TaskRow>): AreaView {
+export function areaView(tasks: readonly TaskRow[], area: string, tree: PlanTree): AreaView {
   const lines = (status: BarStatus) => statusLines(tasks, area, tree, status)
   const waiting = lines('waiting')
   const asked = waiting.filter(t => t.owner !== area)
@@ -90,7 +91,7 @@ export function areaView(tasks: readonly TaskRow[], area: string, tree: TaskTree
  * others the area's own first (the waiting ones before those it asked of others), each in plan order on `tree`'s
  * effective dues.
  */
-export function statusLines(tasks: readonly TaskRow[], area: string, tree: TaskTree<TaskRow>, status: BarStatus): TaskRow[] {
+export function statusLines(tasks: readonly TaskRow[], area: string, tree: PlanTree, status: BarStatus): TaskRow[] {
   const { now, zone } = tree.context
   const today = dayOf(now, zone)
   const lines = listedTasks(tasks, tree).filter(t => barStatusOf(t, area, today, zone) === status)
@@ -102,7 +103,7 @@ export function statusLines(tasks: readonly TaskRow[], area: string, tree: TaskT
  * Every owner with active tasks, `area`'s first (the list's own: the session's, or the one pinned; null for none), the
  * rest by name, each list verifying first, then in plan order on `tree`'s effective dues.
  */
-export function ownerGroups(tasks: readonly TaskRow[], tree: TaskTree<TaskRow>, area: string | null): OwnerGroup[] {
+export function ownerGroups(tasks: readonly TaskRow[], tree: PlanTree, area: string | null): OwnerGroup[] {
   const byOwner = new Map<string, TaskRow[]>()
   for (const task of listedTasks(tasks, tree)) {
     if (!isActive(task)) continue
@@ -171,7 +172,7 @@ function sameValue(a: FieldValue, b: FieldValue): boolean {
  * `since` words (card.ts: an open task's too, which its meta line leaves out) and whether it is parked, as the clock
  * alone parks a quiet task; whether a finished one is done today.
  */
-function timeLabel(task: TaskRow, tree: PaneTree): string {
+function timeLabel(task: TaskRow, tree: PlanTree): string {
   const { now, zone } = tree.context
   return isActive(task)
     ? `${metaText(task, tree)} · ${whenWords(task.statusAt, tree.context)} · ${tree.isParked(task)}`
