@@ -497,19 +497,29 @@ describe('DocumentSource: a read that fails', () => {
 })
 
 describe('DocumentSource: the documents it holds for a caller', () => {
-  test('none before a read, then the sessions, the config and the plan last read', async () => {
+  test('none before a read, then the sessions and the config last read', async () => {
     const { source } = rig()
     expect(source.sessionsRead).toBeNull()
     expect(source.settingsRead).toBeNull()
-    expect(source.planRead).toBeNull()
     await drawn(source)
     expect(source.sessionsRead?.self).toEqual({ team: 'shop', session: 'api' })
     expect(source.settingsRead?.kind).toBe('team')
-    expect(source.planRead?.tasks.map(planned => planned.id)).toEqual(['T1'])
   })
 })
 
+/** The ids of the plan a snapshot carries, in its order; null with no plan. */
+function plannedIds(snapshot: Snapshot): string[] | null {
+  return snapshot.plan?.tasks.map(planned => planned.id) ?? null
+}
+
 describe('DocumentSource: the plan', () => {
+  test('a snapshot carries the plan last read, never one of the file fold', async () => {
+    const { source } = rig({ ...BASE, plan: { at: NOW, validUntil: null, week: null, tasks: [], finished: [{ id: 'T9', workClass: 'Roadmap' }] } })
+    const snapshot = await drawn(source)
+    expect(plannedIds(snapshot)).toEqual(['T1'])
+    expect(snapshot.plan?.finished).toEqual([])
+  })
+
   test('a teamrig that does not serve the plan still has its other documents drawn, under the reason', async () => {
     const { teamrig, source } = rig()
     teamrig.plan = null
@@ -522,7 +532,7 @@ describe('DocumentSource: the plan', () => {
     expect(titles(first)).toEqual(['T1 Title of T1', 'T2 Title of T2'])
     expect(first.inbox).toHaveLength(1)
     expect(first.problem).toBe(`REFUSED ${UNKNOWN_PLAN}`)
-    expect(source.planRead).toBeNull()
+    expect(first.plan).toBeNull()
     const second = await drawn(source, { force: true })
     expect(teamrig.taken().map(asked => [asked.documents.join(' '), asked.session])).toEqual([
       ['tasks sessions config inbox plan', 'api'],
@@ -538,7 +548,7 @@ describe('DocumentSource: the plan', () => {
     teamrig.plan = planDocument('p2', [planned('T2'), planned('T1')])
     const snapshot = await drawn(source, { force: true })
     expect(snapshot.problem).toBeNull()
-    expect(source.planRead?.tasks.map(planned => planned.id)).toEqual(['T2', 'T1'])
+    expect(plannedIds(snapshot)).toEqual(['T2', 'T1'])
   })
 
   test('a run that failed with the plan keeps the plan last held', async () => {
@@ -547,7 +557,7 @@ describe('DocumentSource: the plan', () => {
     teamrig.plan = null
     const snapshot = await drawn(source, { force: true })
     expect(snapshot.problem).toBe(`REFUSED ${UNKNOWN_PLAN}`)
-    expect(source.planRead?.tasks.map(planned => planned.id)).toEqual(['T1'])
+    expect(plannedIds(snapshot)).toEqual(['T1'])
   })
 
   test('its revision is handed back until validUntil, and from that moment the plan is asked for whole', async () => {
@@ -558,9 +568,9 @@ describe('DocumentSource: the plan', () => {
     await drawn(source, { now: NOW + HOUR - 1, force: true })
     expect(teamrig.taken().map(asked => asked.unless)).toEqual(['tasks=t1,sessions=s1,config=c1,inbox=i1,plan=p1'])
     teamrig.plan = planDocument('p1', [planned('T2')], { validUntil: null })
-    await drawn(source, { now: NOW + HOUR, force: true })
+    const later = await drawn(source, { now: NOW + HOUR, force: true })
     expect(teamrig.taken().map(asked => asked.unless)).toEqual(['tasks=t1,sessions=s1,config=c1,inbox=i1'])
-    expect(source.planRead?.tasks.map(planned => planned.id)).toEqual(['T2'])
+    expect(plannedIds(later)).toEqual(['T2'])
   })
 
   test('a plan that cannot be read keeps the one held and names why', async () => {
@@ -569,7 +579,7 @@ describe('DocumentSource: the plan', () => {
     teamrig.plan = { interface: '1.1', document: 'plan', revision: 'p2', problems: [] }
     const snapshot = await drawn(source, { force: true })
     expect(snapshot.problem).toContain("teamrig's plan document")
-    expect(source.planRead?.tasks.map(planned => planned.id)).toEqual(['T1'])
+    expect(plannedIds(snapshot)).toEqual(['T1'])
   })
 })
 

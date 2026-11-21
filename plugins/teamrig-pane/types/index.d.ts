@@ -225,6 +225,12 @@ export type Snapshot = {
    * holds an own task back behind one, as `teamrig list` does. Empty with no team or a team in no tree.
    */
   elsewhere: readonly TaskElsewhere[]
+  /**
+   * teamrig's plan document as last read (hooks/plan-document.ts): the active tasks in plan order with the answers
+   * teamrig's own tree gives of each. Null before a read, from the file fold alone, and from a teamrig that serves
+   * none (older than interface 1.1).
+   */
+  plan: import('../hooks/plan-document').PlanRead | null
   /** When it was built, so due and age labels move on without a file change. */
   now: number
 }
