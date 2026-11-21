@@ -127,7 +127,7 @@ import { LiveStats } from './stats-source'
 import { findTeamrigCli } from './teamrig-cli'
 import { themeOf } from './theme'
 import { currentPlace } from './nav'
-import { treeOf } from './meta'
+import { treeOf } from './plan-tree'
 import { clockOf, machineZoneOf, zoneNamed } from './zone'
 import { FIRST_MEMO, landedOn, type KeysAt } from './find-field'
 

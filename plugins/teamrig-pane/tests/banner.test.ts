@@ -5,17 +5,18 @@ import { readRegister } from '../hooks/core/read/index'
 import { rowOf } from '../hooks/log'
 import { conversationWhen } from '../hooks/log-rows'
 import { UNTITLED } from '../hooks/log-title'
-import { treeOf } from '../hooks/meta'
+import { treeOf } from '../hooks/plan-tree'
 import { SEPARATOR, paneBlocks, type Row } from '../hooks/rows'
 import { clockOf } from '../hooks/zone'
 import { HOUR, NOW, NO_TEAM, SNAPSHOT_SETTINGS, createLine, statusLine, treeAt } from './fixtures'
+import { withPlan } from './served-plan'
 
 function rowsOf(lines: readonly string[]): TaskRow[] {
   return [...readRegister(lines.join('\n')).state.tasks.values()].map(task => rowOf(task))
 }
 
 function snapOf(lines: readonly string[], area: string | null = 'po'): Snapshot {
-  return { tasks: rowsOf(lines), area, areaSource: area === null ? null : 'pinned', unreadInbox: 0, inbox: [], problem: null, ...NO_TEAM, ...SNAPSHOT_SETTINGS, now: NOW }
+  return withPlan({ tasks: rowsOf(lines), area, areaSource: area === null ? null : 'pinned', unreadInbox: 0, inbox: [], problem: null, ...NO_TEAM, ...SNAPSHOT_SETTINGS, now: NOW })
 }
 
 /** The task the banner of `snap` shows, as `kind id`, or null. */

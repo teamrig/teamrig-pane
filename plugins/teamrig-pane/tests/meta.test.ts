@@ -28,9 +28,13 @@ const IN_JERUSALEM = treeAt([], NOW, NOT_PICKED_UP_HOURS, JERUSALEM.name)
 /** A meta line's words past a plain task's class and score: only the tests of those words should move with a score. */
 const pastRank = (parts: readonly Span[]) => parts.map(part => part.text).filter(text => text !== 'Improvements' && !text.startsWith('score '))
 
-/** The meta line's words at `now`, the snapshot holding `tasks`. */
+/** The tree of a snapshot holding `task` among `tasks` at `now`: the plan ranks only a task it holds a row for. */
+const treeWith = (task: TaskRow, now = NOW, tasks: readonly TaskRow[] = []) =>
+  treeAt(tasks.some(each => each.id === task.id) ? tasks : [task, ...tasks], now)
+
+/** The meta line's words at `now`, the snapshot holding the task and `tasks`. */
 const textOf = (task: TaskRow, viewer: string | null, now = NOW, tasks: readonly TaskRow[] = []) =>
-  pastRank(metaParts(task, treeAt(tasks, now), viewer))
+  pastRank(metaParts(task, treeWith(task, now, tasks), viewer))
 
 describe('meta words', () => {
   test("a day is the zone's weekday and month-day; a time today is its zone-marked hour, an older one its day", async () => {
@@ -216,7 +220,7 @@ describe('meta line', () => {
       statusLine('T1', 'po', NOW - 2 * HOUR, 'in-progress', 'halfway'),
     )
     expect(textOf(task, 'po')).toEqual(['p2', 'due Mon 10-12', 'in progress since 12:00 UTC', 'late 14h'])
-    expect(metaParts(task, AT_NOW, 'po').map(part => part.color)).toEqual([undefined, undefined, undefined, undefined, undefined, 'error'])
+    expect(metaParts(task, treeWith(task), 'po').map(part => part.color)).toEqual([undefined, undefined, undefined, undefined, undefined, 'error'])
   })
 
   test('a bug says so after its priority, a critical one critical bug; a task, or one no one typed, says nothing', async () => {
@@ -241,7 +245,7 @@ describe('meta line', () => {
   test('waiting: since when and why, in red; one waiting since an earlier day names the day', async () => {
     const task = taskOf(createLine('T1', { owner: 'po', by: 'po', at: NOW - 2 * DAY }), statusLine('T1', 'po', NOW - DAY, 'waiting', 'waits on T58'))
     expect(textOf(task, 'po')).toEqual(['p3', 'waiting since Mon 10-12: waits on T58'])
-    expect(metaParts(task, AT_NOW, 'po')[3]?.color).toBe('error')
+    expect(metaParts(task, treeWith(task), 'po')[3]?.color).toBe('error')
     const bare = taskOf(createLine('T1', { owner: 'po', by: 'po', at: NOW - DAY }), statusLine('T1', 'po', NOW, 'waiting'))
     expect(textOf(bare, 'po')).toEqual(['p3', 'waiting since 14:00 UTC'])
   })
@@ -294,7 +298,7 @@ describe('meta line', () => {
   test('an open task someone else asked for is new to its owner and names who asked, then reads not picked up', async () => {
     const task = taskOf(createLine('T1', { owner: 'po', by: 'lead', at: NOW - HOUR, source: 'lead' }))
     expect(textOf(task, 'po')).toEqual(['p3', 'new', 'asked by lead'])
-    expect(metaParts(task, AT_NOW, 'po')[3]?.color).toBe('suggestion')
+    expect(metaParts(task, treeWith(task), 'po')[3]?.color).toBe('suggestion')
     expect(textOf(task, 'po', NOW + 2 * DAY)).toEqual(['p3', 'not picked up 2d', 'asked by lead'])
     const own = taskOf(createLine('T1', { owner: 'po', by: 'po', at: NOW - HOUR, source: 'po' }))
     expect(textOf(own, 'po')).toEqual(['p3'])

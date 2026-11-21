@@ -4,7 +4,7 @@
 // The active matches come in teamrig's plan order, as the list orders them, then the finished ones, newest first; at
 // most MAX_RESULTS are kept, with how many more matched. Older weeks' finished tasks are not held, so not searched. Pure.
 import type { TaskRow } from '../types'
-import type { TaskTree } from './core/read/index'
+import type { PlanTree } from './plan-tree'
 import { matchRows, type Hit, type SearchSpec } from './search'
 import { isActive, newestFirst } from './view'
 
@@ -38,7 +38,7 @@ export const NO_RESULTS: SearchResults = { active: [], done: [], more: 0 }
  * `tasks`, meta.ts treeOf), then the finished ones newest first, MAX_RESULTS in all at most, the active first, and how
  * many more matched. A blank query names none.
  */
-export function searchTasks(tasks: readonly TaskRow[], query: string, tree: TaskTree<TaskRow>): SearchResults {
+export function searchTasks(tasks: readonly TaskRow[], query: string, tree: PlanTree): SearchResults {
   const hits = matchRows(tasks, query, TASK_SEARCH)
   if (hits.length === 0) return NO_RESULTS
   const active = hits.filter(hit => isActive(hit.row)).sort((a, b) => tree.byPlanOrder(a.row, b.row))

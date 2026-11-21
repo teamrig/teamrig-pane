@@ -19,12 +19,13 @@
 // register.tsx draws, a link as a link, and a task id the snapshot holds (ids.ts) and a reference file underlined, a
 // press on one opening that task's or that file's page.
 import type { TaskDetail, TaskRow } from '../types'
-import { TimeZone, type TaskTree, type WaitContext } from './core/read/index'
+import { TimeZone, type WaitContext } from './core/read/index'
 import { fileLabel, refParts } from './details'
 import { idSpans } from './ids'
 import { leadOf } from './leads'
 import { taskLinks } from './links'
-import { dueWords, lateWords, neededByLines, rankWords, STATUS_WORDS, storedDayWords, typeWords, waitingWords, whenWords, type PaneTree } from './meta'
+import { dueWords, lateWords, neededByLines, rankWords, STATUS_WORDS, storedDayWords, typeWords, waitingWords, whenWords } from './meta'
+import type { PlanTree } from './plan-tree'
 import { refSegments } from './ref-file'
 import type { Row, Span } from './rows'
 import { weekAfter, weekOf, type Clock } from './zone'
@@ -102,7 +103,7 @@ function statusLines(task: TaskRow, context: WaitContext): Lines {
 }
 
 /** `Fri 10-17` (`Fri 10-17 (from T7)` on a date taken from T7, meta.ts dueWords), then `late 1d` in red while it is past due. */
-function dueLines(task: TaskRow, tree: TaskTree<TaskRow>): Lines {
+function dueLines(task: TaskRow, tree: PlanTree): Lines {
   const due = dueWords(task, tree)
   if (due === null) return []
   const late = lateWords(task, tree)
@@ -203,7 +204,7 @@ export function cardRows(
   section: string,
   task: TaskRow,
   detail: TaskDetail,
-  tree: PaneTree,
+  tree: PlanTree,
   lead: Span | null = GUIDE,
   only: ReadonlySet<CardField> | null = null,
 ): Row[] {

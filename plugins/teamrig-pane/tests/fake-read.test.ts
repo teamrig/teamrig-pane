@@ -1,12 +1,11 @@
 // The fake teamrig the whole-pane specs read through (tests/fake-read.ts): that each document it prints from a
 // register's files is one the pane's own readers take whole, saying what the pane's fold of those files says; whom
 // it serves an inbox; what a held revision answers; what it refuses, a run at a time (T4742); and that its plan is
-// the pane's own tree of the fold, served as interface 1.1 does (T4759).
+// teamrig's own tree of the fold, served as interface 1.1 does (T4759).
 import { describe, expect, test } from 'claude-code/testing'
 import { configOf } from '../hooks/config-document'
 import type { BodyRead } from '../hooks/document-fields'
 import { inboxOf } from '../hooks/inbox-document'
-import { treeOf } from '../hooks/meta'
 import { findPlaces } from '../hooks/places'
 import { planOf } from '../hooks/plan-document'
 import { readAnswer, type DocumentName, type ReadDocument } from '../hooks/read-document'
@@ -17,6 +16,7 @@ import type { CliRun } from '../hooks/teamrig-cli'
 import type { Snapshot } from '../types'
 import { fakeRead, type FakeDisk } from './fake-read'
 import { HOUR, INBOX_LINES, MemoryFiles, NO_TREE_GOALS, NOW, S1, S2, TEAM_SETTINGS, createLine, iso, markLine, statusLine, waitingLine } from './fixtures'
+import { foldTreeOf } from './fold-tree'
 import { hire, retire } from './team-fixtures'
 
 const HOME = '/Homes/tester'
@@ -264,7 +264,7 @@ describe('the fake teamrig read', () => {
     expect([document.interface, 'cuts' in document.fields]).toEqual([{ major: 1, minor: 1 }, false])
     const plan = readOf(run, 'plan', planOf)
     const fold = await foldOf(files, null)
-    const tree = treeOf(fold)
+    const tree = foldTreeOf(fold)
     const active = tree.inPlanOrder(fold.tasks.filter(task => task.status !== 'done'))
     expect(active.length).toBe(3)
     expect(plan.at).toBe(NOW)
