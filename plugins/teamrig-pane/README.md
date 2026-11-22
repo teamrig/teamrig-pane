@@ -476,8 +476,8 @@ closes or opens the sessions it leads. Inline, where a row is one press, the row
 opened or closed stays so across a hot reload. ↑ and ↓ move between rows. There are no ← and → keys, since the engine
 binds keys only to buttons.
 
-Each team's and session's row ends in `[Stats]`, which opens the Stats tab on that team (its child teams rolled in) or
-that session (the tasks it owns). `‹ back` (`b`) and the trail `Teams › Stats` then lead the tab, and back shows the
+Each team's and session's row ends in `[Stats]`, which opens the Stats tab on that team or that session (the tasks it
+owns), when the team is the session's own or one above it; any other opens it on the session's own team. `‹ back` (`b`) and the trail `Teams › Stats` then lead the tab, and back shows the
 Teams tab at that row. A Health count's list keeps its own back first, and a press on the switch drops the row's.
 Inline `[Stats]` is words only, as `[Meet]` and `[Wake]` are.
 
@@ -575,17 +575,16 @@ reads is counted on a `WARN` line, the rest still shown. There is no Find field:
 
 ### Stats
 
-Stats folds the registers of the tree of teams the session's team is in into the numbers `teamrig stats` prints, for
-the scope and the days it picks. Two rows of presses lead it, the pick in brackets: the scope (the tree, each team in
-it, and a session once one is picked, whose press goes back to its team) and the range (7, 30, 90 or 180 days, a
-year, or all):
+Stats draws the numbers `teamrig stats` prints, as teamrig serves them, for the scope and the days it picks. Two rows
+of presses lead it, the pick in brackets: the scope (the session's own team or a team above it, the root first, and a
+session once one is picked, whose press goes back to its team) and the range (7, 30, 90 or 180 days, a year, or all):
 
-    Scope  [tree]  acme  tools
+    Scope  acme  [tools]
     Range  [7 d]  30 d  90 d  180 d  1 y  all
 
 Then the Health section under its heading: tiles, each a `●` in its level's colour (green good, amber warn, red bad)
 beside teamrig's words for it (the HEALTH line of `teamrig stats`, but for its `backlog clears` forecast, which has
-no tasks behind it), and the scope's week against its plan, two a row where they fit. Each count of tasks above none
+no tasks behind it), two a row where they fit. Each count of tasks above none
 (`64 closed`, `81 opened`, `308 active`, the overdue count and its `p1 10`, the owner decisions) is a press that lists
 those tasks in place of the numbers, under `‹ back` and a trail such as `Stats › Overdue (35)`: a dim line saying what
 the list holds and in what order, then each task's row over a dim line of its owner, priority, due date and, for
@@ -596,7 +595,7 @@ header folds it (`▸`) and again opens it. Open, it draws the active tasks at e
 bars of what opened and closed, then the burn-up and the cumulative flow over the whole range, each part after a blank
 row and each day's bar a blank column from the next. (A `$` is to mark a day the week sat at its usage limit, so a
 quiet day there is not read as slack; the pane has no source for those days yet, so none shows.) A team's charts say
-where a split moved tasks out of it, as only the tree's are whole before one.
+where a split moved tasks out of it, as only the whole tree's numbers are whole before one.
 
 Eight more sections follow Flow, closed by default, each header answering the glance on its own; a press on one opens
 it:
@@ -650,11 +649,12 @@ why), its pace, then its tasks, the active ones p1 first and by due date, then t
 line under the goals counts the range's done tasks that served no goal; with no goals, a note says
 `No goals: teamrig goal add sets one.` over it.
 
-It reads files only: the team folders as the Teams tab reads them, the whole history of each team's register the scope
-takes in, each read only once a scope needs it, and the goals of those teams and the teams above them. It reads every 3 s while it shows, and only then; a press reads
-at once. It folds again only when a history, the scope, the range or the minute moved. A team folder or a register it
-cannot read draws as it last read, or is left out before then, on a `WARN` line naming it and why; with no team, or
-the pane's own register unread, the tab says why. There is no Find field.
+It reads no register, goals or team file: one run of the installed teamrig's `read` command serves its `stats`
+document for the scope's team (`--team` for a team above the session's own), session (`--owner`) and range (`--range`),
+the tasks behind each count with it. It reads every 3 s while it shows, and only then; a press reads at once. teamrig
+answers `unchanged` while its files and the pick stand, until the document's `validUntil`, when a count of days of age
+moves with the clock alone. A run that fails, or a document the pane cannot read, draws the numbers last read on a
+`WARN` line saying why; before any read worked, the tab says why. There is no Find field.
 
 ## Reading the register
 
