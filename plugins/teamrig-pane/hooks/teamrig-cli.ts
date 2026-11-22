@@ -5,7 +5,8 @@
 // With no such install (a plugin folder loaded with --plugin-dir, or a list in another config folder: issue #119), the
 // `teamrig` command on the PATH is the fallback: the plugin's `bin/teamrig` (and `bin/teamrig.cmd`) run
 // `<bin>/../dist/cli/main.js`, so that file beside the first PATH folder holding the command is run the same way. The
-// hooks API cannot follow a link, so a linked or npm-made shim with no dist beside it is passed over.
+// hooks API cannot follow a link, so a linked or npm-made shim with no dist beside it is passed over. That order is the
+// dock's (DOCK_LOOKUPS); the dedicated UI runs under any AI CLI, so it looks on the PATH first (UI_LOOKUPS, T5046).
 // Reads files only; runs nothing.
 import { messageOf } from './errors'
 import { slashed } from './source'
@@ -133,16 +134,31 @@ async function cliInPluginList(files: CliFiles, env: CliEnv): Promise<TeamrigCli
   }
 }
 
+/** One place the CLI is looked for: found, or why not, as a phrase the caller ends. Never rejects. */
+export type CliLookup = (files: CliFiles, env: CliEnv) => Promise<TeamrigCli>
+
+/** The teamrig command on the PATH: the same under every AI CLI. */
+export const ON_PATH: CliLookup = (files, env) => cliOnPath(files, env.path)
+/** Claude Code's own list of installed plugins: a place only under Claude Code. */
+export const CLAUDE_CODE_PLUGINS: CliLookup = cliInPluginList
+
+/** The dock runs inside Claude Code, so the install Claude Code loaded it beside comes first. */
+export const DOCK_LOOKUPS: readonly CliLookup[] = [CLAUDE_CODE_PLUGINS, ON_PATH]
+/** The dedicated UI runs under any AI CLI or none (T5046), so the host-neutral PATH comes first. */
+export const UI_LOOKUPS: readonly CliLookup[] = [ON_PATH, CLAUDE_CODE_PLUGINS]
+
 /**
- * The teamrig CLI: the plugin list's first install with it, else the one beside the teamrig command on the PATH; else
- * why neither, both places named. A failed read or check is a problem too, never a throw.
+ * The teamrig CLI: the first of `lookups` that finds it, in their order; else why none did, every place named. A failed
+ * read or check is a problem too, never a throw.
  */
-export async function findTeamrigCli(files: CliFiles, env: CliEnv): Promise<TeamrigCli> {
-  const listed = await cliInPluginList(files, env)
-  if (listed.kind === 'found') return listed
-  const onPath = await cliOnPath(files, env.path)
-  if (onPath.kind === 'found') return onPath
-  return { kind: 'missing', problem: `${listed.problem}, and ${onPath.problem}: install the teamrig plugin` }
+export async function findTeamrigCli(files: CliFiles, env: CliEnv, lookups: readonly CliLookup[] = DOCK_LOOKUPS): Promise<TeamrigCli> {
+  const problems: string[] = []
+  for (const lookup of lookups) {
+    const found = await lookup(files, env)
+    if (found.kind === 'found') return found
+    problems.push(found.problem)
+  }
+  return { kind: 'missing', problem: `${problems.join(', and ')}: install the teamrig plugin` }
 }
 
 /** The command line that runs the CLI with `args`. */

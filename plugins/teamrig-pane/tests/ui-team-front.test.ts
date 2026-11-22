@@ -122,6 +122,25 @@ describe('the teamrig the UI calls back', () => {
     expect(missing.kind).toBe('missing')
   })
 
+  test('with no CLAUDE_CONFIG_DIR and no Claude Code plugin list, is the teamrig command on the PATH (T5046)', async () => {
+    const exists = new Set(['/opt/teamrig/bin/teamrig', '/opt/teamrig/dist/cli/main.js'])
+    const cliFiles = { exists: (path: string) => Promise.resolve(exists.has(path)), read: () => Promise.reject(new Error('no file')) }
+    const env = (name: string): string | undefined => (name === 'PATH' ? '/usr/bin:/opt/teamrig/bin' : undefined)
+    expect(await uiCli({ env, cliFiles, home: HOME })).toEqual({ kind: 'found', main: '/opt/teamrig/dist/cli/main.js' })
+  })
+
+  test("takes the PATH's teamrig over the one in Claude Code's plugin list (T5046)", async () => {
+    const list = `${HOME}/.claude/plugins/installed_plugins.json`
+    const exists = new Set([list, '/cc/teamrig/dist/cli/main.js', '/opt/teamrig/bin/teamrig', '/opt/teamrig/dist/cli/main.js'])
+    const cliFiles = {
+      exists: (path: string) => Promise.resolve(exists.has(path)),
+      read: (path: string) => (path === list ? Promise.resolve(JSON.stringify({ plugins: { 'teamrig@teamrig': [{ installPath: '/cc/teamrig' }] } })) : Promise.reject(new Error('no file'))),
+    }
+    const env = (name: string): string | undefined => (name === 'PATH' ? '/opt/teamrig/bin' : undefined)
+    expect(await uiCli({ env, cliFiles, home: HOME })).toEqual({ kind: 'found', main: '/opt/teamrig/dist/cli/main.js' })
+    expect(await uiCli({ env: () => undefined, cliFiles, home: HOME })).toEqual({ kind: 'found', main: '/cc/teamrig/dist/cli/main.js' })
+  })
+
   test("runs the CLI's command line on the Node.js teamrig ran, and any other program as named", () => {
     expect(withNode(['node', CLI_SCRIPT, 'read'], NODE)).toEqual([NODE, CLI_SCRIPT, 'read'])
     expect(withNode(['node', CLI_SCRIPT], undefined)).toEqual(['node', CLI_SCRIPT])
