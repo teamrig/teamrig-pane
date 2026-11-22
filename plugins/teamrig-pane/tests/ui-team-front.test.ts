@@ -49,6 +49,7 @@ type RigTimer = { readonly ms: number; isCancelled: boolean; readonly fire: () =
 type Rig = {
   readonly team: TeamFront
   readonly store: MemoryStore
+  /** The team's files, for a spec to change the register or the last-typed record under the UI. */
   readonly files: MemoryFiles
   readonly runs: Ran[]
   /** The timers started, by their period, whether each was cancelled, and its call. */
@@ -230,20 +231,26 @@ describe("the UI's team", () => {
     expect(timers.map(timer => timer.ms).slice(0, 2)).toEqual([TICK_MS, POLL_MS])
   })
 
-  test("reads the team again at the refresher's tick, with no event stream to follow", async () => {
-    const { team, runs, timers } = rig({ args: { team: null, session: 'api' } })
+  test("draws a task added to the register at the refresher's tick, with no event stream to follow", async () => {
+    const { team, store, runs, files, timers } = rig({ args: { team: null, session: 'api' } })
     await team.start()
     await drain()
+    // A register no file of which moved is not read again; the new event moves it.
+    const added = createLine('T3', { at: NOW - HOUR, by: 'po', owner: 'api', title: 'Test the route' })
+    files.write(PATHS.events, [...EVENTS, added].join('\n'))
     const before = runs.length
     const poll = timers.find(timer => timer.ms === POLL_MS)
     expect(poll?.isCancelled).toBe(false)
     poll?.fire()
     // The tick's read waits out the gap from the refresher's first read.
     for (const gap of timers.filter(timer => timer.ms === GAP_MS && !timer.isCancelled)) gap.fire()
-    await drain()
+    const taskIds = async (): Promise<string[]> => (await store.read('snapshot')).tasks.map(task => task.id)
+    // A read the tick starts runs more turns than one drain gives: wait for its drawing, within a bound.
+    for (let round = 0; round < 40 && (await taskIds()).length < 3; round += 1) await drain()
     expect(runs.length).toBeGreaterThan(before)
     expect(runs.at(-1)?.argv.slice(0, 3)).toEqual([NODE, CLI_SCRIPT, 'read'])
     expect(runs.some(ran => ran.argv.includes('events'))).toBe(false)
+    expect(await taskIds()).toEqual(['T1', 'T2', 'T3'])
     team.stop()
   })
 
