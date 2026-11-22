@@ -7,9 +7,9 @@ import type { Snapshot } from '../types'
 import type { KeysWords } from '../hooks/find-field'
 import { WrapCache } from '../hooks/layout'
 import { NoteHold } from '../hooks/note-hold'
-import type { PaneStore } from '../hooks/pane-store'
 import { runApp, type AppDeps, type Front, type FrontLook } from './app'
 import { openTerminal, type Input, type Output, type Terminal } from './terminal'
+import type { ObservedStore } from './watched-store'
 
 /** The signals that end the program: the terminal's window closed (SIGHUP), the process asked to stop (SIGTERM). */
 export type Signal = 'SIGHUP' | 'SIGTERM'
@@ -31,7 +31,7 @@ export type ProgramDeps = {
   readonly input: Input
   readonly output: Output
   readonly signals: Signals
-  readonly store: PaneStore
+  readonly store: ObservedStore
   readonly front: AppDeps['front']
   readonly look: FrontLook
   /**

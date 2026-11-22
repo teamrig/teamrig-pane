@@ -17,6 +17,7 @@ import type { Key, KeyName } from '../ui/keys'
 import type { Size } from '../ui/paint'
 import type { Run } from '../ui/run'
 import type { Terminal } from '../ui/terminal'
+import { WatchedStore } from '../ui/watched-store'
 import { HOUR, NOW, NO_TEAM, SNAPSHOT_SETTINGS, createLine } from './fixtures'
 
 const TASKS: TaskRow[] = [
@@ -45,15 +46,16 @@ const PORTS: Ports = {
 const KEYS: KeysWords = { leave: { search: 'Esc: out', result: null, pane: 'x: quit' }, away: 'Keys are elsewhere', page: [{ name: 'quit', keys: 'x', words: ': quits' }] }
 
 type RigOptions = {
+  /** The state the rig starts from, STATE when left out. */
   readonly store?: MemoryStore
   /** What the terminal throws at each drawing: a screen that went away. */
   readonly gone?: Error
-  /** The front of a rig, given its store; every port null when left out. */
-  readonly front?: (store: MemoryStore) => AppDeps['front']
+  /** The front of a rig, given the app's own store, as main.ts gives the team's front; every port null when left out. */
+  readonly front?: (store: WatchedStore) => AppDeps['front']
 }
 
 type Rig = {
-  readonly store: MemoryStore
+  readonly store: WatchedStore
   /** Each drawing's lines as text. */
   readonly drawn: string[][]
   readonly closes: () => number
@@ -67,7 +69,7 @@ type Rig = {
 const tick = () => new Promise<void>(resolve => setTimeout(resolve, 0))
 
 function rig(size: Size, options: RigOptions = {}): Rig {
-  const store = options.store ?? new MemoryStore(STATE)
+  const store = new WatchedStore(options.store ?? new MemoryStore(STATE))
   const drawn: string[][] = []
   const pending: (() => void)[] = []
   let now = size
@@ -181,6 +183,14 @@ describe('the first drawing', () => {
     expect(shown(app)).toContain('○ T50  Task number 0')
     await app.idle()
     expect(app.drawn.length).toBe(1)
+  })
+
+  test('is drawn again when a writer outside the app changes the store, as a team read does', async () => {
+    const app = await started(SHORT)
+    await app.store.update('snapshot', current => ({ ...current, tasks: current.tasks.map(task => (task.id === 'T50' ? { ...task, title: 'Read again' } : task)) }))
+    await app.idle()
+    expect(app.drawn.length).toBe(2)
+    expect(shown(app)).toContain('○ T50  Read again')
   })
 
   test('is drawn again at a new size', async () => {
@@ -314,7 +324,7 @@ describe('the Find field', () => {
 describe('a Note field', () => {
   const acted =
     (runs: string[][]) =>
-    (store: MemoryStore): AppDeps['front'] => {
+    (store: WatchedStore): AppDeps['front'] => {
       let held: OwnerActs | null = null
       return focus => {
         held ??= new OwnerActs(CLI, {
