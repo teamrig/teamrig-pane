@@ -6,8 +6,9 @@
 // arrives: a read under way often brings the marked revision itself, and the mark then asks for nothing.
 // The stream is a saving, never the only way: until a stream says hello, and for a view with a document the stream
 // does not serve, a tick every POLL_MS reads as U1's poll did (each read hands back the revisions held, so an
-// unchanged document costs the start alone). The same tick reads a view whose last read failed, and picks up a view
-// shown without `viewChanged` being told. A stream that ends is followed again after a wait that doubles from
+// unchanged document costs the start alone). The same tick reads a view whose last read failed, a view that also
+// draws from what no document serves (`polls`: the team's files beneath the documents), and picks up a view shown
+// without `viewChanged` being told. A stream that ends is followed again after a wait that doubles from
 // RESTART_MIN_MS to RESTART_MAX_MS and starts over once a stream stayed open that long, so a follower that dies at
 // its start is not started every second. Runs nothing itself: reads and the stream are its ports.
 import type { Every } from './bounded-run'
@@ -23,8 +24,10 @@ export const RESTART_MAX_MS = 60_000
 
 /** One view's reader, as the refresher drives it. */
 export type Subject = {
-  /** The documents its view draws from, by the names the stream marks them with; at least one. */
+  /** The documents its view draws from, by the names `teamrig events` takes; at least one. */
   readonly documents: readonly string[]
+  /** True when its view also draws from what no document serves: the tick reads it while a stream is live too. */
+  readonly polls: boolean
   /** True while its view is drawn. A rejection is taken as not drawn. */
   readonly isShown: () => Promise<boolean>
   /** The revision it holds of `document`; null when none. */
@@ -216,7 +219,7 @@ export class Refresher {
   private tick(run: Run): void {
     for (const tracked of run.tracked) {
       const isUnserved = tracked.subject.documents.some(document => !run.served.has(document))
-      if (!run.isLive || isUnserved || tracked.hasFailed) tracked.mustRead = true
+      if (!run.isLive || isUnserved || tracked.hasFailed || tracked.subject.polls) tracked.mustRead = true
     }
     this.pumpAll(run)
   }

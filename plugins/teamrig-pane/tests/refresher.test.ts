@@ -88,9 +88,14 @@ type View = {
 }
 
 function viewOf(...documents: string[]): View {
+  return viewPolling(false, ...documents)
+}
+
+function viewPolling(polls: boolean, ...documents: string[]): View {
   const view: View = {
     subject: {
       documents,
+      polls,
       isShown: () => Promise.resolve(view.isShown),
       held: document => view.held.get(document) ?? null,
       refresh: async () => {
@@ -280,6 +285,19 @@ describe('Refresher', () => {
     feed.stream().onFrame(hello(['tasks', 'r7']))
     await clock.advance(2 * POLL_MS)
     expect([tasks.reads, stats.reads]).toEqual([1, 3])
+  })
+
+  test('a view that polls keeps reading on the tick while the stream is live, and a frame still reads it at once', async () => {
+    const tasks = viewPolling(true, 'tasks')
+    tasks.held.set('tasks', 'r7')
+    const { feed, clock, refresher } = await started(tasks)
+    feed.stream().onFrame(hello(['tasks', 'r7']))
+    await clock.advance(2 * POLL_MS)
+    expect(refresher.feedState().isLive).toBe(true)
+    expect(tasks.reads).toBe(3)
+    feed.stream().onFrame(changed(['tasks', 'r8']))
+    await clock.advance(GAP_MS)
+    expect(tasks.reads).toBe(4)
   })
 
   test('a failed read, or one that rejects, is read again on the tick until it works', async () => {
