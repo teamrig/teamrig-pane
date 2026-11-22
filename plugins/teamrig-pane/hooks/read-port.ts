@@ -7,6 +7,7 @@
 // the missing one. A failure's reason may quote what the run wrote to stderr or how it broke: that is another
 // program's text as much as a document is, so every reason leaves here as the pane may draw it (shown-text.ts).
 // Runs the CLI only; no model calls.
+import type { StatsRange } from './core/read/index'
 import { messageOf } from './errors'
 import { readAnswer, type DocumentName, type ReadDocument } from './read-document'
 import { shownText } from './shown-text'
@@ -25,6 +26,12 @@ export type ReadAsk<Name extends DocumentName = DocumentName> = { readonly name:
  * pane runs in, which teamrig answers the `sessions` document's `self` by.
  */
 export type ReadAsker = { readonly session: string | null; readonly conversation: string }
+
+/**
+ * What a read narrows its documents to, each left to teamrig's default when absent: `team`, a team above the
+ * caller's (the CLI's `--team`); `owner`, one session's tasks (`--owner`); `range`, the days `stats` counts (`--range`).
+ */
+export type ReadNarrowing = { readonly team?: string; readonly owner?: string; readonly range?: StatsRange }
 
 export type ReadPorts = {
   /** Runs `argv`, the teamrig CLI and its words (teamrig-cli.ts cliArgv); rejects when it cannot start or outlasts `timeoutMs`. */
@@ -53,14 +60,17 @@ function failed(reason: string): { readonly kind: 'failed'; readonly reason: str
 /**
  * The CLI's words for one read of `asks` as `asker`. The revisions held go in one `--unless`, a comma list: teamrig's
  * parser refuses a flag given twice. A conversation id teamrig would refuse the run for is left out, so the documents
- * are still read, with no `self`.
+ * are still read, with no `self`. `narrowing` adds a flag for each of its fields given.
  */
-export function readWords(asks: readonly ReadAsk[], asker: ReadAsker): string[] {
+export function readWords(asks: readonly ReadAsk[], asker: ReadAsker, narrowing: ReadNarrowing = {}): string[] {
   const words = ['read', ...asks.map(ask => ask.name), '--json']
   const held = asks.flatMap(ask => (ask.held === null ? [] : [`${ask.name}=${ask.held}`]))
   if (held.length > 0) words.push('--unless', held.join(','))
   if (asker.session !== null) words.push('--session', asker.session)
   if (CONVERSATION.test(asker.conversation)) words.push('--conversation', asker.conversation)
+  if (narrowing.team !== undefined) words.push('--team', narrowing.team)
+  if (narrowing.owner !== undefined) words.push('--owner', narrowing.owner)
+  if (narrowing.range !== undefined) words.push('--range', narrowing.range)
   return words
 }
 
@@ -93,12 +103,21 @@ export function readResult<Name extends DocumentName>(run: CliRun, asks: readonl
   return { kind: 'read', documents, problems }
 }
 
-/** Reads `asks` as `asker` in one run of `cli`; with none to read it runs nothing. A run that cannot finish is a failure, never a throw. */
-export async function readDocuments<Name extends DocumentName>(cli: TeamrigCli, ports: ReadPorts, asks: readonly ReadAsk<Name>[], asker: ReadAsker): Promise<ReadResult<Name>> {
+/**
+ * Reads `asks` as `asker`, narrowed by `narrowing`, in one run of `cli`; with none to read it runs nothing. A run that
+ * cannot finish is a failure, never a throw.
+ */
+export async function readDocuments<Name extends DocumentName>(
+  cli: TeamrigCli,
+  ports: ReadPorts,
+  asks: readonly ReadAsk<Name>[],
+  asker: ReadAsker,
+  narrowing: ReadNarrowing = {},
+): Promise<ReadResult<Name>> {
   if (asks.length === 0) return nothingRead()
   if (cli.kind === 'missing') return failed(cli.problem)
   try {
-    return readResult(await ports.run(cliArgv(cli.main, readWords(asks, asker)), READ_TIMEOUT_MS), asks)
+    return readResult(await ports.run(cliArgv(cli.main, readWords(asks, asker, narrowing)), READ_TIMEOUT_MS), asks)
   } catch (error) {
     return failed(`teamrig read did not finish: ${messageOf(error)}`)
   }
