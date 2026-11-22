@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.82.0](https://github.com/teamrig/teamrig-pane/compare/teamrig-pane-v0.81.0...teamrig-pane-v0.82.0) (2026-11-22)
+
+
+### Features
+
+* **ui:** the UI follows the session the person last typed in (T5101) ([3ea3825](https://github.com/teamrig/teamrig-pane/commit/3ea38251f67952cddc86a06d7e32355851aaff15))
+
 ## [0.81.0](https://github.com/teamrig/teamrig-pane/compare/teamrig-pane-v0.80.0...teamrig-pane-v0.81.0) (2026-11-22)
 
 
