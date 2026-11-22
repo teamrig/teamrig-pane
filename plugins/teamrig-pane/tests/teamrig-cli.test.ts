@@ -2,7 +2,7 @@
 // the home's .claude; the first teamrig install whose dist/cli/main.js is there; else the one beside the teamrig command
 // on the PATH (issue #119); why neither is, as one line.
 import { describe, expect, test } from 'claude-code/testing'
-import { cliArgv, findTeamrigCli, pathFolders, pluginListPath, teamrigInstalls, type CliFiles } from '../hooks/teamrig-cli'
+import { cliArgv, findTeamrigCli, UI_LOOKUPS, pathFolders, pluginListPath, teamrigInstalls, type CliFiles } from '../hooks/teamrig-cli'
 
 const HOME = 'D:\\profile'
 const LIST = 'D:/profile/.claude/plugins/installed_plugins.json'
@@ -143,6 +143,20 @@ describe('findTeamrigCli', () => {
       [DEV_MAIN]: '',
     })
     expect(await findTeamrigCli(files, onPath)).toEqual({ kind: 'found', main: NEW_MAIN })
+  })
+
+  test("in the UI's order the PATH's install wins, and a miss names the PATH first", async () => {
+    const files = filesOf({
+      [LIST]: listOf({ 'teamrig@teamrig': [{ installPath: NEW }] }),
+      [NEW_MAIN]: '',
+      'D:/src/teamrig/plugins/teamrig/bin/teamrig': '',
+      [DEV_MAIN]: '',
+    })
+    expect(await findTeamrigCli(files, onPath, UI_LOOKUPS)).toEqual({ kind: 'found', main: DEV_MAIN })
+    expect(await findTeamrigCli(filesOf({}), onPath, UI_LOOKUPS)).toEqual({
+      kind: 'missing',
+      problem: `no teamrig command on the PATH with its dist/cli/main.js beside it, and no plugin list at ${LIST}: install the teamrig plugin`,
+    })
   })
 
   test('a list it cannot read still falls to the PATH', async () => {

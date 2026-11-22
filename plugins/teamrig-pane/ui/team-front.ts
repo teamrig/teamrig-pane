@@ -15,7 +15,7 @@ import { findPlaces, TEAMRIG_ENV, type Places, type PlacesEnv } from '../hooks/p
 import type { ReadsFile } from '../hooks/presses'
 import { RefFileReader } from '../hooks/ref-file'
 import { registerPaths, TaskRegisterSource, type Files } from '../hooks/source'
-import { findTeamrigCli, type CliFiles, type CliRun, type TeamrigCli } from '../hooks/teamrig-cli'
+import { findTeamrigCli, UI_LOOKUPS, type CliFiles, type CliRun, type TeamrigCli } from '../hooks/teamrig-cli'
 import { TreeGoals } from '../hooks/tree-goals'
 import type { TaskDetail, TaskRow } from '../types'
 import { withActs } from './acts-front'
@@ -80,7 +80,10 @@ export type TeamFrontDeps = {
   readonly machineZone: string
 }
 
-/** The teamrig CLI the UI calls: the one that started it, else the one the dock would find. */
+/**
+ * The teamrig CLI the UI calls: the one that started it, else the teamrig command on the PATH, else Claude Code's plugin
+ * list: the UI runs under any AI CLI, so the place every one shares comes first (T5046).
+ */
 export function uiCli(deps: Pick<TeamFrontDeps, 'env' | 'cliFiles' | 'home'>): Promise<TeamrigCli> {
   const named = deps.env(UI_ENV.cli)?.trim()
   if (named !== undefined && named !== '') return Promise.resolve({ kind: 'found', main: named })
@@ -89,7 +92,7 @@ export function uiCli(deps: Pick<TeamFrontDeps, 'env' | 'cliFiles' | 'home'>): P
     home: deps.home ?? undefined,
     // Windows may name the PATH `Path`.
     path: deps.env('PATH') ?? deps.env('Path'),
-  })
+  }, UI_LOOKUPS)
 }
 
 /** `argv` with the `node` the CLI's command line names (teamrig-cli.ts cliArgv) as `node`, the one teamrig ran. */
