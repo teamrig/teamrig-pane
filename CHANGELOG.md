@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.81.0](https://github.com/teamrig/teamrig-pane/compare/teamrig-pane-v0.80.0...teamrig-pane-v0.81.0) (2026-11-22)
+
+
+### Features
+
+* **pane:** a read can narrow its documents to a team above, one owner and a stats range (T4759) ([c89565f](https://github.com/teamrig/teamrig-pane/commit/c89565faf7081ea6cecaa5ecec694581381c15c8))
+* **pane:** the Stats scope row offers the pane's team and the teams above it, never the whole tree (T4759) ([4541234](https://github.com/teamrig/teamrig-pane/commit/45412346ae57ab97e31091241e5e163c00afa58f))
+* **pane:** the Stats tab reads teamrig's stats document in one run, and no register, goals or team file (T4759) ([5ce61fa](https://github.com/teamrig/teamrig-pane/commit/5ce61fa762d161def9546652e00e1a215954f25c))
+* **pane:** the Stats tab's numbers read from teamrig's stats document (T4759) ([9d29bf3](https://github.com/teamrig/teamrig-pane/commit/9d29bf3329948241cdf200ed2576099efeee33c1))
+* **ui:** the dedicated UI finds the teamrig CLI on the PATH first, Claude Code's plugin list after (T5046) ([65ba5ea](https://github.com/teamrig/teamrig-pane/commit/65ba5ea4df27049da7f0d6063f0b75afd5478357)), closes [#214](https://github.com/teamrig/teamrig-pane/issues/214)
+
 ## [0.80.0](https://github.com/teamrig/teamrig-pane/compare/teamrig-pane-v0.79.0...teamrig-pane-v0.80.0) (2026-11-22)
 
 
