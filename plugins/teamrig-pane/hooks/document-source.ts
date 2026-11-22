@@ -82,11 +82,14 @@ class Held<T> {
   }
 }
 
+/** The documents this source polls; `stats` is the Stats tab's own, asked only while the tab is open. */
+type PolledName = Exclude<DocumentName, 'stats'>
+
 /** The documents every read asks for; `inbox` joins them once the area is known to be on the team. */
-const ALWAYS: readonly DocumentName[] = ['tasks', 'sessions', 'config']
+const ALWAYS: readonly PolledName[] = ['tasks', 'sessions', 'config']
 
 /** What one run asks for: the documents of every read, the inbox when a session is named, the plan last. */
-function namesAsked(session: string | null, withPlan: boolean): DocumentName[] {
+function namesAsked(session: string | null, withPlan: boolean): PolledName[] {
   return [...ALWAYS, ...(session === null ? [] : ['inbox' as const]), ...(withPlan ? ['plan' as const] : [])]
 }
 
@@ -130,7 +133,7 @@ export class DocumentSource implements SnapshotSource {
   private readonly sessions = new Held(sessionsOf)
   private readonly config = new Held(configOf)
   private readonly plan = new Held(planOf)
-  private readonly held: Readonly<Record<DocumentName, { take(document: ReadDocument): void }>>
+  private readonly held: Readonly<Record<PolledName, { take(document: ReadDocument): void }>>
   /** The file source's last snapshot: a poll of it answers null while nothing it reads moved. */
   private base: FoldSnapshot | null = null
   /** When the documents were last asked for; null before the first read. */
@@ -205,7 +208,7 @@ export class DocumentSource implements SnapshotSource {
   }
 
   /** One run for `names` as `session`; false when it answered no document, its reason added to `problems`. */
-  private async run(names: readonly DocumentName[], session: string | null, input: PollInput, problems: string[]): Promise<boolean> {
+  private async run(names: readonly PolledName[], session: string | null, input: PollInput, problems: string[]): Promise<boolean> {
     const asks = names.map(name => ({ name, held: this.revisionOf(name, session, input.now) }))
     const result = await readDocuments(this.cli, this.ports, asks, { session, conversation: input.claudeSession })
     if (result.kind === 'failed') {
@@ -222,7 +225,7 @@ export class DocumentSource implements SnapshotSource {
    * only before its `validUntil`: its revision covers what it was built from, never the clock, so past that moment
    * teamrig would answer `unchanged` for a plan the time alone has moved.
    */
-  private revisionOf(name: DocumentName, session: string | null, now: number): string | null {
+  private revisionOf(name: PolledName, session: string | null, now: number): string | null {
     if (name === 'tasks') return this.tasks.revision
     if (name === 'sessions') return this.sessions.revision
     if (name === 'config') return this.config.revision
