@@ -1,9 +1,9 @@
 // The snapshot the views draw, with what `teamrig read` serves laid over what the pane still folds from the team's
 // files (T4742): the task rows, the area with its name and inbox, who leads whom and the drawn settings come from
-// the `tasks`, `inbox`, `sessions` and `config` documents (the `plan` document is read with them and held, drawn by
-// no view so far, T4759); the files keep feeding what no document serves yet, ids
-// and numbers only (the work marks, goals' ranks, spend, task counts, whose cards wait on the owner, and the other
-// teams' tasks the own ones are judged by, of which only the id, status and numbers are read). A title is drawn from
+// the `tasks`, `inbox`, `sessions` and `config` documents, and whose cards wait on the owner from the `plan` document
+// (T4759); the files keep feeding what no document serves yet, ids and numbers only (the work marks, goals' ranks,
+// spend, task counts, and the other teams' tasks the own ones are judged by, of which only the id, status and
+// numbers are read). A title is drawn from
 // a document's row or not at all: an owner card whose task the rows lack is left out, and until the first tasks
 // document is read the list is empty under the reason, never the fold's rows. A failed run, or a document that
 // cannot be read, keeps what was last drawn and names why. Runs the CLI only; no model calls.
@@ -12,7 +12,8 @@ import type { BodyRead } from './document-fields'
 import { isHeldFinished } from './done'
 import { inboxShown } from './inbox'
 import { inboxOf, type InboxRead } from './inbox-document'
-import { planOf } from './plan-document'
+import { laterWords } from './owner-cards'
+import { planOf, type PlanRead } from './plan-document'
 import type { DocumentName, ReadDocument } from './read-document'
 import { readDocuments, type ReadPorts } from './read-port'
 import { nameOf, leadsOf } from './session-roster'
@@ -22,6 +23,8 @@ import { joinedProblems, type FilePoll, type PollInput } from './source'
 import { tasksOf } from './tasks-document'
 import type { TeamrigCli } from './teamrig-cli'
 import { isActive } from './view'
+import { zoneNamed } from './zone'
+import type { TimeZone } from './core/read/index'
 import type { DrawnSettings, SessionOwnerCards, Snapshot, TaskRow } from '../types'
 
 /**
@@ -96,20 +99,22 @@ type Place = {
 }
 
 /**
- * Each session's cards on the owner with the titles `rows` serve: the fold says whose tasks wait on the owner, the
- * document how each is titled. A card whose task the rows lack is left out, and a session left with none is absent.
+ * Each session's cards on the owner with the titles `rows` serve: the `plan` document says whose tasks wait on the
+ * owner, in its order (a Later card soonest back first), the `tasks` document how each is titled, and a Later card's
+ * time is told in `zone`. A card whose task the rows lack is left out, and a session left with none is absent; a
+ * teamrig older than interface 1.5 serves no cards, so none are drawn.
  */
-export function titledCards(cards: Snapshot['ownerCards'], rows: readonly TaskRow[]): Snapshot['ownerCards'] {
+export function titledCards(cards: PlanRead['ownerCards'], rows: readonly TaskRow[], zone: TimeZone): Snapshot['ownerCards'] {
   const titles = new Map(rows.map(row => [row.id, row.title]))
   const titled: Record<string, SessionOwnerCards> = {}
-  for (const [session, { due, later }] of Object.entries(cards)) {
-    const dueNow = due.flatMap(({ id }) => {
+  for (const { session, due, later } of cards ?? []) {
+    const dueNow = due.flatMap(id => {
       const title = titles.get(id)
       return title === undefined ? [] : [{ id, title }]
     })
     const putOff = later.flatMap(({ id, until }) => {
       const title = titles.get(id)
-      return title === undefined ? [] : [{ id, title, until: shownText(until) }]
+      return title === undefined ? [] : [{ id, title, until: shownText(laterWords(until, zone)) }]
     })
     if (dueNow.length > 0 || putOff.length > 0) titled[session] = { due: dueNow, later: putOff }
   }
@@ -272,9 +277,10 @@ export class DocumentSource implements SnapshotSource {
     const sessions = this.sessions.value
     const inbox = this.inboxOf(place)
     const rows = this.tasks.value ?? []
+    const settings = this.settingsOf(base.team)
     return {
       ...base,
-      ...this.settingsOf(base.team),
+      ...settings,
       tasks: rows.filter(task => isActive(task) || isHeldFinished(task, now)),
       plan: this.plan.value,
       area: place.area,
@@ -283,7 +289,7 @@ export class DocumentSource implements SnapshotSource {
       leads: sessions === null || base.team === null ? null : leadsOf(sessions, base.team),
       unreadInbox: inbox?.unread ?? null,
       inbox: inbox === null ? [] : inboxShown(inbox.items, now),
-      ownerCards: titledCards(base.ownerCards, rows),
+      ownerCards: titledCards(this.plan.value?.ownerCards ?? null, rows, zoneNamed(settings?.timeZone ?? base.timeZone)),
       problem: joinedProblems([
         base.problem,
         ...this.runProblems,

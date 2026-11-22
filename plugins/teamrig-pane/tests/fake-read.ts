@@ -1,8 +1,9 @@
 // A teamrig that answers `read` from a register's files, for the specs that run the whole pane (pane.test.ts): the
 // pane draws its tasks, inbox, sessions and settings from `teamrig read` alone (T4742), so a test that writes a
 // register's files needs a teamrig that serves them. It finds the team as the pane does (hooks/places.ts), folds the
-// register with the pane's own fold (hooks/source.ts) and prints each document as interface 1.1 serves it: 1.0's
-// four in a 1.0 envelope, and the `plan` (served-plan.ts) in a 1.1 one, judged at the fake's clock. Its
+// register with the pane's own fold (hooks/source.ts) and prints each document as interface 1.5 serves it: 1.0's
+// four in a 1.0 envelope, and the `plan` (served-plan.ts) with its owner cards in a 1.5 one, judged at the fake's
+// clock. Its
 // `sessions` document is the tree of the kit home's team folders that holds the team (served-sessions.ts), each
 // team's sessions from its config, rename log and hire log, the asking team's with their unread inbox lines. What it
 // does not do as teamrig does: a session's row carries no state, ask, host or conversation, and a peer team's no
@@ -13,12 +14,12 @@ import { indexMarks, inboxLines, parseConfigText, readHiringLog, readMarks, read
 import { lineHash } from '../hooks/line-hash'
 import { findPlaces, kitHomeOf, teamIds, teamStateDir, type PlacesInput, type TeamFiles } from '../hooks/places'
 import type { DocumentName, JsonRecord } from '../hooks/read-document'
-import { registerPaths, TaskRegisterSource, type Files, type RegisterDirs } from '../hooks/source'
+import { LayoutRegister, registerPaths, TaskRegisterSource, type Files, type RegisterDirs } from '../hooks/source'
 import type { CliRun } from '../hooks/teamrig-cli'
 import type { Snapshot, TaskRow, TeamSettings } from '../types'
 import { NO_TREE_GOALS } from './fixtures'
 import { askedOf, printed, refused, settingRows, type Asked } from './served-documents'
-import { servedPlan } from './served-plan'
+import { servedOwnerCards, servedPlan } from './served-plan'
 import { servedSessions, type TeamSessions } from './served-sessions'
 
 /**
@@ -178,8 +179,12 @@ function isServedName(value: string): value is DocumentName {
 /** What one document of a team says, without its envelope; the plan without its `at`, which the envelope's clock adds. */
 async function teamBody(name: DocumentName, disk: FakeDisk, team: Team, asked: Asked, now: number): Promise<JsonRecord> {
   switch (name) {
-    case 'plan':
-      return servedPlan(await foldOf(disk, team, null, asked.conversation, now))
+    case 'plan': {
+      const fold = await foldOf(disk, team, null, asked.conversation, now)
+      const register = new LayoutRegister(disk.files, registerPaths(team.dirs).events)
+      await register.refresh()
+      return { ...servedPlan(fold), ownerCards: servedOwnerCards(register.current.state.tasks, fold, team.settings.requireDecisionCard) }
+    }
     case 'tasks': {
       const fold = await foldOf(disk, team, null, asked.conversation, now)
       return { tasks: fold.tasks.map(row => servedTask(row, team)) }
@@ -223,12 +228,12 @@ function heldOf(unless: string | null): ReadonlyMap<string, string> {
 
 /**
  * The document as it is printed at `now`: `unchanged` alone when the asker holds its revision, else the body in its
- * envelope. The plan comes as interface 1.1 serves it, with when it was judged and no `cuts`; its revision is taken
+ * envelope. The plan comes as interface 1.5 serves it, with when it was judged and no `cuts`; its revision is taken
  * before that time is added, or every read of it would be a changed one.
  */
 function enveloped(name: DocumentName, body: JsonRecord, held: string | undefined, now: number): JsonRecord {
   const revision = lineHash(JSON.stringify(body))
-  const version = name === 'plan' ? '1.1' : '1.0'
+  const version = name === 'plan' ? '1.5' : '1.0'
   if (held === revision) return { interface: version, document: name, revision, unchanged: true }
   if (name === 'plan') return { interface: version, document: name, revision, problems: [], at: new Date(now).toISOString(), ...body }
   return { interface: version, document: name, revision, problems: [], ...body, cuts: [] }

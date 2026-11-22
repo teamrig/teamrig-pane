@@ -5,10 +5,12 @@
 // taken the revision: teamrig's revision covers the files and never the clock. A spec with no fake teamrig reads the
 // same plan through the pane's own reader (planReadOf, withPlan).
 import { MS_PER_DAY, parseDeadline } from '../hooks/core/core/time'
-import { ACTIVE_STATUSES, taskNumber, type NextMove, type TaskTree } from '../hooks/core/read/index'
+import { ACTIVE_STATUSES, ownerCardsBySession, taskNumber, TaskTree, type NextMove, type Task } from '../hooks/core/read/index'
 import { planBand, type PlanPlace } from '../hooks/core/register/tree'
 import { planOf, type PlanRead } from '../hooks/plan-document'
+import { rankingOf } from '../hooks/ranking'
 import { parseDocument, type JsonRecord } from '../hooks/read-document'
+import { zoneNamed } from '../hooks/zone'
 import type { TaskRow } from '../types'
 import { foldTreeOf, type FoldSource } from './fold-tree'
 
@@ -104,6 +106,27 @@ export function servedPlan(fold: FoldSource): JsonRecord {
       .sort((a, b) => taskNumber(a.id) - taskNumber(b.id))
       .map(task => ({ id: task.id, workClass: rankedOf(tree.placeOf(task)).workClass })),
   }
+}
+
+/**
+ * The `plan` document's `ownerCards` (interface 1.5) for the register's tasks at the fold's clock, as teamrig's
+ * servedOwnerCards builds them: each session's cards on the owner, due ones in plan order, Later ones soonest back
+ * first (plan order among the same time, one that reads as no time last), each with its stored time and that moment,
+ * or null. It takes the register's own tasks, not the fold's rows: whether a task is on the owner reads its card and
+ * its security verdict, which a row does not carry.
+ */
+export function servedOwnerCards(tasks: ReadonlyMap<string, Task>, fold: FoldSource, requireDecisionCard: boolean): JsonRecord[] {
+  const tree = new TaskTree(tasks, new Date(fold.now), zoneNamed(fold.timeZone), undefined, undefined, rankingOf(fold.focus, fold.ownerSource, fold.goals, fold.spend))
+  const served: JsonRecord[] = []
+  for (const [session, cards] of ownerCardsBySession([...tasks.values()], tree, fold.ownerSource, requireDecisionCard)) {
+    const later = cards.later.map(({ task, until }) => ({ id: task.id, until, back: parseDeadline(until, tree.zone)?.getTime() ?? Number.POSITIVE_INFINITY }))
+    served.push({
+      session,
+      due: cards.due.map(task => task.id),
+      later: later.sort((a, b) => a.back - b.back).map(({ id, until, back }) => ({ id, until, at: Number.isFinite(back) ? new Date(back).toISOString() : null })),
+    })
+  }
+  return served
 }
 
 /** The fold's plan as the pane reads it off teamrig: servedPlan in interface 1.1's envelope, through the pane's readers. */

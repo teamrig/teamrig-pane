@@ -3,7 +3,9 @@
 // and that a failed run or an unreadable document keeps what was drawn under its reason, with no title ever taken
 // from the fold (T4742).
 import { describe, expect, test } from 'claude-code/testing'
+import { TimeZone } from '../hooks/core/read/index'
 import { DocumentSource, READ_EVERY_MS, titledCards, type FileSource } from '../hooks/document-source'
+import type { PlanRead } from '../hooks/plan-document'
 import { parseDocument, type JsonRecord } from '../hooks/read-document'
 import type { ReadPorts } from '../hooks/read-port'
 import { CONTROL_SHOWN } from '../hooks/shown-text'
@@ -381,9 +383,15 @@ describe('DocumentSource: what it draws', () => {
     expect((await drawn(source)).tasks.map(row => row.id)).toEqual(['T2', 'T3'])
   })
 
-  test("an owner card is titled by the document's row, never by the fold", async () => {
-    const { source } = rig({ ...BASE, ownerCards: { api: { due: [{ id: 'T1', title: 'A title from the fold' }], later: [] }, web: { due: [{ id: 'T77', title: 'Not served' }], later: [] } } })
+  test("the owner cards are the plan document's, titled by the document's row, never the fold's", async () => {
+    const { teamrig, source } = rig({ ...BASE, ownerCards: { web: { due: [{ id: 'T1', title: 'A card from the fold' }], later: [] } } })
+    teamrig.plan = planDocument('p1', [planned('T1')], { interface: '1.5', ownerCards: [{ session: 'api', due: ['T1', 'T77'], later: [] }] })
     expect((await drawn(source)).ownerCards).toEqual({ api: { due: [{ id: 'T1', title: 'Title of T1' }], later: [] } })
+  })
+
+  test('a teamrig older than interface 1.5 serves no owner cards, so none are drawn, not even the fold\'s', async () => {
+    const { source } = rig({ ...BASE, ownerCards: { api: { due: [{ id: 'T1', title: 'A card from the fold' }], later: [] } } })
+    expect((await drawn(source)).ownerCards).toEqual({})
   })
 
   test('the inbox line window moves with the clock', async () => {
@@ -586,15 +594,24 @@ describe('titledCards', () => {
   const rows = rowsOf([task('T1'), task('T2')])
 
   test('takes each title from the rows, drops a card whose task they lack, and a session left with none', () => {
-    const cards: Snapshot['ownerCards'] = {
-      api: { due: [{ id: 'T1', title: 'old' }, { id: 'T9', title: 'gone' }], later: [{ id: 'T2', title: 'old too', until: 'Mon 11-02' }, { id: 'T8', title: 'gone', until: 'Tue 11-03' }] },
-      web: { due: [{ id: 'T9', title: 'gone' }], later: [] },
-    }
-    expect(titledCards(cards, rows)).toEqual({ api: { due: [{ id: 'T1', title: 'Title of T1' }], later: [{ id: 'T2', title: 'Title of T2', until: 'Mon 11-02' }] } })
+    const cards: PlanRead['ownerCards'] = [
+      { session: 'api', due: ['T1', 'T9'], later: [{ id: 'T2', until: '2026-11-02', at: null }, { id: 'T8', until: '2026-11-03', at: null }] },
+      { session: 'web', due: ['T9'], later: [] },
+    ]
+    expect(titledCards(cards, rows, TimeZone.UTC)).toEqual({ api: { due: [{ id: 'T1', title: 'Title of T1' }], later: [{ id: 'T2', title: 'Title of T2', until: 'Mon 11-02' }] } })
   })
 
-  test("a put-off card's day is drawn as data", () => {
-    const cards: Snapshot['ownerCards'] = { api: { due: [], later: [{ id: 'T1', title: 'old', until: 'Mon\u001b[2J' }] } }
-    expect(titledCards(cards, rows)['api']?.later[0]?.until).toBe(`Mon${CONTROL_SHOWN}[2J`)
+  test("keeps the served order, and tells a put-off card's minute in the team's zone", () => {
+    const cards: PlanRead['ownerCards'] = [{ session: 'api', due: [], later: [{ id: 'T2', until: '2026-10-13 15:00', at: null }, { id: 'T1', until: '2026-11-02', at: null }] }]
+    expect(titledCards(cards, rows, TimeZone.UTC)['api']?.later.map(card => card.until)).toEqual(['10-13 15:00 UTC', 'Mon 11-02'])
+  })
+
+  test('draws no cards from a teamrig that serves none', () => {
+    expect(titledCards(null, rows, TimeZone.UTC)).toEqual({})
+  })
+
+  test("a put-off card's time is drawn as data", () => {
+    const cards: PlanRead['ownerCards'] = [{ session: 'api', due: [], later: [{ id: 'T1', until: 'Mon\u001b[2J', at: null }] }]
+    expect(titledCards(cards, rows, TimeZone.UTC)['api']?.later[0]?.until).toBe(`Mon${CONTROL_SHOWN}[2J`)
   })
 })
