@@ -157,6 +157,11 @@ describe('tasksOf', () => {
     expect(readOf([task])).toEqual({ rows: [{ ...ROW, description: null, answer: null, size: null }], problems: [] })
   })
 
+  test('reads a description teamrig cut (interface 1.6) as its whole length and hash, and one it marks not cut as whole', () => {
+    expect(rowOf({ description: null, descriptionCut: { chars: 4200, hash: 'ab12cd34' } })).toEqual({ ...ROW, description: null, descriptionCut: { chars: 4200, hash: 'ab12cd34' } })
+    expect(rowOf({ descriptionCut: null })?.descriptionCut).toBeNull()
+  })
+
   test('keeps the text of outside words, the id of a tracker as the source and the ref as stored, with the item it names', () => {
     const row = rowOf({
       title: { text: 'Crash on start', source: 'outside' },
@@ -282,6 +287,9 @@ describe('tasksOf', () => {
       [{ answer: { verdict: 'approved', at: AT } }, 'answer.by'],
       [{ decided: { by: 'lead' } }, 'decided.at'],
       [{ after: [3] }, 'after'],
+      [{ descriptionCut: 900 }, 'descriptionCut'],
+      [{ descriptionCut: { hash: 'ab12' } }, 'descriptionCut.chars'],
+      [{ descriptionCut: { chars: 900, hash: null } }, 'descriptionCut.hash'],
     ]
     for (const [over, field] of cases) {
       expect(readOf([served(over)])).toEqual({ rows: [], problems: [`teamrig served 1 task the pane cannot read, T7 (${field}): update teamrig-pane`] })

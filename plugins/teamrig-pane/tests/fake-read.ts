@@ -1,9 +1,9 @@
 // A teamrig that answers `read` from a register's files, for the specs that run the whole pane (pane.test.ts): the
 // pane draws its tasks, inbox, sessions and settings from `teamrig read` alone (T4742), so a test that writes a
 // register's files needs a teamrig that serves them. It finds the team as the pane does (hooks/places.ts), folds the
-// register with the pane's own fold (hooks/source.ts) and prints each document as interface 1.5 serves it: 1.0's
-// four in a 1.0 envelope, and the `plan` (served-plan.ts) with its owner cards in a 1.5 one, judged at the fake's
-// clock. Its
+// register with the pane's own fold (hooks/source.ts) and prints each document as interface 1.6 serves it: `tasks`
+// with each description's cut mark in a 1.6 envelope, the other three of 1.0 in a 1.0 one, and the `plan`
+// (served-plan.ts) with its owner cards in a 1.5 one, judged at the fake's clock. Its
 // `sessions` document is the tree of the kit home's team folders that holds the team (served-sessions.ts), each
 // team's sessions from its config, rename log and hire log, the asking team's with their unread inbox lines. What it
 // does not do as teamrig does: a session's row carries no state, ask, host or conversation, and a peer team's no
@@ -75,7 +75,7 @@ function servedSource(source: string, team: Team): JsonRecord {
 
 /** A task as the `tasks` document serves it: the fold's row, its texts marked as the team's, its source and ref as data. */
 function servedTask(row: TaskRow, team: Team): JsonRecord {
-  const { descriptionCut: _notServed, item: _servedInRef, isImported: _servedInSource, title, description, source, ref, ...served } = row
+  const { item: _servedInRef, isImported: _servedInSource, title, description, source, ref, ...served } = row
   return {
     ...served,
     title: { text: title, source: 'team' },
@@ -233,7 +233,7 @@ function heldOf(unless: string | null): ReadonlyMap<string, string> {
  */
 function enveloped(name: DocumentName, body: JsonRecord, held: string | undefined, now: number): JsonRecord {
   const revision = lineHash(JSON.stringify(body))
-  const version = name === 'plan' ? '1.5' : '1.0'
+  const version = name === 'plan' ? '1.5' : name === 'tasks' ? '1.6' : '1.0'
   if (held === revision) return { interface: version, document: name, revision, unchanged: true }
   if (name === 'plan') return { interface: version, document: name, revision, problems: [], at: new Date(now).toISOString(), ...body }
   return { interface: version, document: name, revision, problems: [], ...body, cuts: [] }
