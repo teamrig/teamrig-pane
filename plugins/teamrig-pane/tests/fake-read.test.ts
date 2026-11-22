@@ -1,7 +1,7 @@
 // The fake teamrig the whole-pane specs read through (tests/fake-read.ts): that each document it prints from a
 // register's files is one the pane's own readers take whole, saying what the pane's fold of those files says; whom
 // it serves an inbox; what a held revision answers; what it refuses, a run at a time (T4742); and that its plan is
-// teamrig's own tree of the fold, served as interface 1.1 does (T4759).
+// teamrig's own tree of the fold, with each session's cards on the owner, served as interface 1.5 does (T4759).
 import { describe, expect, test } from 'claude-code/testing'
 import { configOf } from '../hooks/config-document'
 import type { BodyRead } from '../hooks/document-fields'
@@ -248,7 +248,7 @@ describe('the fake teamrig read', () => {
     expect(await teamrig(['read', '--json'])).toEqual(refusal)
   })
 
-  test("serves the plan as interface 1.1 does: the active tasks in the pane's own plan order, the finished ones by their class", async () => {
+  test("serves the plan as interface 1.5 does: the active tasks in the pane's own plan order, the finished ones by their class", async () => {
     const { files, disk } = teamDisk()
     files.write(
       PATHS.events,
@@ -261,7 +261,7 @@ describe('the fake teamrig read', () => {
     )
     const run = await fakeRead(disk, () => NOW)(words('tasks plan', '--conversation', S1))
     const document = documentOf(run, 'plan')
-    expect([document.interface, 'cuts' in document.fields]).toEqual([{ major: 1, minor: 1 }, false])
+    expect([document.interface, 'cuts' in document.fields]).toEqual([{ major: 1, minor: 5 }, false])
     const plan = readOf(run, 'plan', planOf)
     const fold = await foldOf(files, null)
     const tree = foldTreeOf(fold)
@@ -306,6 +306,26 @@ describe('the fake teamrig read', () => {
     expect(plan.tasks.find(task => task.id === 'T2')?.next).toEqual({ kind: 'time', who: 'api', task: 'T2', behind: null, at: NOW + 2 * HOUR })
   })
 
+  test("serves each session's cards on the owner: due ones in plan order, put-off ones with their time and that moment", async () => {
+    const { files, disk } = teamDisk()
+    const card = { question: 'Ship it?', options: ['A: now', 'B: later'], recommend: 'A', byDefault: 'B', gate: 'product' }
+    files.write(
+      PATHS.events,
+      [
+        ...EVENTS,
+        waitingLine('T1', 'po', NOW - HOUR, [{ kind: 'decision', who: 'owner' }], null, card),
+        waitingLine('T2', 'api', NOW - HOUR, [{ kind: 'decision', who: 'owner' }, { kind: 'time', at: '2026-10-13 16:00' }], null, card),
+        createLine('T3', { at: NOW - 2 * HOUR, by: 'lead', owner: 'api' }),
+        waitingLine('T3', 'api', NOW - HOUR, [{ kind: 'decision', who: 'owner' }]),
+      ].join('\n'),
+    )
+    const plan = readOf(await fakeRead(disk, () => NOW)(words('plan')), 'plan', planOf)
+    expect(plan.ownerCards).toEqual([
+      { session: 'po', due: ['T1'], later: [] },
+      { session: 'api', due: ['T3'], later: [{ id: 'T2', until: '2026-10-13 16:00', at: NOW + 2 * HOUR }] },
+    ])
+  })
+
   test('answers a held plan revision with unchanged while only the clock moved, and serves it again once the register did', async () => {
     const { files, disk } = teamDisk()
     let now = NOW
@@ -313,7 +333,7 @@ describe('the fake teamrig read', () => {
     const revision = documentOf(await teamrig(words('plan')), 'plan').revision
     now = NOW + HOUR
     const later = documentOf(await teamrig(words('plan', '--unless', `plan=${revision}`)), 'plan')
-    expect([later.isUnchanged, later.revision, later.interface]).toEqual([true, revision, { major: 1, minor: 1 }])
+    expect([later.isUnchanged, later.revision, later.interface]).toEqual([true, revision, { major: 1, minor: 5 }])
     files.write(PATHS.events, [...EVENTS, statusLine('T2', 'api', NOW, 'in-progress')].join('\n'))
     const moved = await teamrig(words('plan', '--unless', `plan=${revision}`))
     expect(documentOf(moved, 'plan').isUnchanged).toBe(false)
