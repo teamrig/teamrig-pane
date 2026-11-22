@@ -15,7 +15,7 @@ import { inboxOf, type InboxRead } from './inbox-document'
 import { laterWords } from './owner-cards'
 import { planOf, type PlanRead } from './plan-document'
 import type { DocumentName, ReadDocument } from './read-document'
-import { readDocuments, type ReadPorts } from './read-port'
+import { readDocuments, type ReadAsker, type ReadPorts } from './read-port'
 import { nameOf, leadsOf } from './session-roster'
 import { sessionsOf, type SessionsRead } from './sessions-document'
 import { shownText } from './shown-text'
@@ -98,6 +98,8 @@ export class DocumentSource implements SnapshotSource {
   private readAt: number | null = null
   /** What the last read's runs could not answer. */
   private runProblems: readonly string[] = []
+  /** Who the last run that answered asked as; null before one did. */
+  private lastAsker: ReadAsker | null = null
 
   constructor(files: FileSource, cli: TeamrigCli, ports: ReadPorts) {
     this.files = files
@@ -114,6 +116,32 @@ export class DocumentSource implements SnapshotSource {
   /** The config document last read; null before one is. */
   get settingsRead(): SettingsRead | null {
     return this.config.value
+  }
+
+  /**
+   * Who the last run that answered asked as: the session whose inbox is held, else none. An event follower asks as
+   * the same, so the revisions it marks are of the documents this source holds. Null before a run answered.
+   */
+  get asker(): ReadAsker | null {
+    return this.lastAsker
+  }
+
+  /** The revision held of the document named `document`, as `teamrig events` names it; null for none or an unknown name. */
+  heldRevision(document: string): string | null {
+    switch (document) {
+      case 'tasks':
+        return this.tasks.revision
+      case 'sessions':
+        return this.sessions.revision
+      case 'config':
+        return this.config.revision
+      case 'plan':
+        return this.plan.revision
+      case 'inbox':
+        return this.inbox.revision
+      default:
+        return null
+    }
   }
 
   /**
@@ -168,11 +196,13 @@ export class DocumentSource implements SnapshotSource {
   /** One run for `names` as `session`; false when it answered no document, its reason added to `problems`. */
   private async run(names: readonly PolledName[], session: string | null, input: PollInput, problems: string[]): Promise<boolean> {
     const asks = names.map(name => ({ name, held: this.revisionOf(name, session, input.now) }))
-    const result = await readDocuments(this.cli, this.ports, asks, { session, conversation: input.claudeSession })
+    const asker: ReadAsker = { session, conversation: input.claudeSession }
+    const result = await readDocuments(this.cli, this.ports, asks, asker)
     if (result.kind === 'failed') {
       problems.push(result.reason)
       return false
     }
+    this.lastAsker = asker
     problems.push(...result.problems)
     for (const [name, document] of result.documents) this.held[name].take(document)
     return true
