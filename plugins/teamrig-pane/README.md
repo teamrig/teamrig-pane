@@ -661,8 +661,9 @@ pane runs the installed teamrig's `read` command (`node <teamrig>/dist/cli/main.
 `tasks`, `inbox`, `sessions`, `config` and `plan` documents, one run for all of them, when a file of its own team
 that a document is built from moved (the register, the team config or its rename log, the session's inbox,
 the inbox read marks) and at least once a minute. The files that hold numbers alone start no run: the
-tasks' week file, which the budget hooks write on every session's turn, the goals and the other teams'
-registers are drawn from the files as they move. Each run hands back the revision it holds of each document, so teamrig
+tasks' week file, which the budget hooks write on every session's turn, and the goals are drawn from the
+files as they move. Another team's register is never read: what it decides reaches the pane through the
+plan. Each run hands back the revision it holds of each document, so teamrig
 builds only what changed. A run that fails, or a document the pane cannot read, keeps what was last drawn
 under a `WARN` line naming why (`teamrig read did not finish: …`, `teamrig read printed no tasks document`);
 the pane never falls back to reading the team's files for it. A document of another major interface version
@@ -672,8 +673,11 @@ The `plan` document (the order teamrig plans the tasks in, with what each waits 
 interface 1.1. An older teamrig refuses a run that names it, so the pane asks again without it: the other
 documents are drawn as ever, under a `WARN` line with teamrig's reason (`unknown document "plan"; …`) until
 teamrig is updated. The plan's revision is handed back only until the moment the plan itself says it holds
-to (`validUntil`); from then it is asked for whole, since the time alone moves it. No view draws from the
-plan yet: the order and the ranks still come from the files.
+to (`validUntil`); from then it is asked for whole, since the time alone moves it. The task list's order,
+its ranks and parks, a card's After row and, from interface 1.5, each session's cards on the owner (the
+Teams tab's counts) come from the plan; with no plan served, the tasks draw unranked and no session shows
+cards on the owner. From interface 1.6 the `tasks` document marks a description it left out, and the
+card says so (`description cut (N characters)`); an older teamrig's cards show none.
 
 The team's files still feed what no document serves yet, ids and numbers only (the work marks, the goals'
 ranks, spend, the task counts, whose cards wait on the owner): for these the pane parses and folds the
