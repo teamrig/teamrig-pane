@@ -48,6 +48,14 @@ function decisionOf(decided: Fields | null): DecisionRow | null {
   return decided === null ? null : { by: decided.text('by'), at: decided.text('at'), note: decided.textOrNull('note') }
 }
 
+/**
+ * The mark of a description the register's snapshot left out: its whole length and hash. Served since interface 1.6;
+ * an older teamrig serves none, so its rows never say one was cut.
+ */
+function cutOf(cut: Fields | null): TaskRow['descriptionCut'] {
+  return cut === null ? null : { chars: cut.number('chars'), hash: cut.text('hash') }
+}
+
 /** teamrig's kind for a source that is a tracker's connector, not the owner or a session (teamrig's src/interface/source.ts). */
 const CONNECTOR_KIND = 'connector'
 
@@ -74,8 +82,7 @@ function rowOf(task: Fields): TaskRow {
     id: task.text('id'),
     title: task.part('title').text('text'),
     description: task.partOrNull('description')?.text('text') ?? null,
-    // Interface 1.0 serves no mark of a description the register's snapshot left out, so a row never says one was.
-    descriptionCut: null,
+    descriptionCut: cutOf(task.partOrNull('descriptionCut')),
     owner: task.text('owner'),
     priority: task.number('priority'),
     type: typeOf(task.textOrNull('type')),
