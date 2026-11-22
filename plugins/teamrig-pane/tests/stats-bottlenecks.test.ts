@@ -7,7 +7,7 @@ import { readEvents, registerStats, TimeZone, type AreaMeasure, type HealthLevel
 import type { Row, Span } from '../hooks/rows'
 import { slimAreas } from '../hooks/stats-areas'
 import { BOTTLENECK_ROWS, BOTTLENECKS_KEY, bottlenecksHead, bottlenecksRows } from '../hooks/stats-bottlenecks'
-import { goalsOf } from '../hooks/stats-source'
+import { goalsOf } from './stats-goals'
 import { cells } from '../hooks/width'
 import type { StatsArea, StatsAreaCell, StatsAreaGroup, StatsAreas, StatsChoice, StatsNumbers, StatsView } from '../types'
 import { createLine, NOW } from './fixtures'

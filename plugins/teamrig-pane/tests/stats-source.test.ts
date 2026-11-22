@@ -1,189 +1,86 @@
-// The Stats tab's source (hooks/stats-source.ts): teamrig's stats fold and Health tiles over the scope the tab picks,
-// in the tree of teams that holds the pane's team; the own register at the pane's register, a peer's in its state
-// folder, each read once a scope takes it in; folded again only when a history, the scope, the range or the minute
-// moves; the scope's week; written only when it changed, read only while the tab shows; a press during a read reads
-// again after it; a folder or register whose read fails drawn as it last read, or left out before one, and named.
-// Each goal's progress folds over the scoped teams' goals and those above them, the nearer team's on a shared tag; a
-// goals file whose read fails is named and folds as last read, never failing the view.
+// The Stats tab's source (hooks/stats-source.ts): one `teamrig read stats` run per read, narrowed to the team the scope
+// picks when it is above the pane's, to a session by --owner, and to the range; the revision held handed back, except
+// past validUntil and when the team, session or range moved; the teams to pick the pane's own and those above it, as
+// the held sessions document places them; written only when it changed, read only while the tab shows; a press during
+// a read reads again after it; a failed run or an unreadable document drawn as last read with why, before any read a
+// failed view (T4759).
 import { describe, expect, test } from 'claude-code/testing'
-import type { StatsView } from '../types'
-import {
-  TEAM_WEEK_FORMAT,
-  TimeZone,
-  dueTime,
-  readEvents,
-  readGoals,
-  readRegister,
-  registerHealth,
-  registerStats,
-  type Goal,
-  type GoalProgress,
-  type StatsScope,
-  type StatsTask,
-  type StatsTasks,
-  type StatsTeam,
-  type TeamWeekSummary,
-} from '../hooks/core/read/index'
-import { POLL_MS, TICK_MS } from '../hooks/live'
-import type { TeamFiles } from '../hooks/places'
-import type { FileStamp, Files } from '../hooks/source'
-import { areaListKey, slimAreas } from '../hooks/stats-areas'
-import { goalsOf, LiveStats, listsOf, placerOf, plannedRows, type StatsPick, type StatsSettings } from '../hooks/stats-source'
-import { weekOf } from '../hooks/team'
-import { HOUR, MemoryFiles, NOW, createLine, iso, statusLine, waitingLine } from './fixtures'
-import { weekFile } from './team-fixtures'
+import type { StatsChoice, StatsView } from '../types'
+import { POLL_MS } from '../hooks/live'
+import { parseDocument, type JsonRecord } from '../hooks/read-document'
+import type { SessionsRead } from '../hooks/sessions-document'
+import { areaListKey } from '../hooks/stats-areas'
+import { statsOf, type StatsRead } from '../hooks/stats-document'
+import { LiveStats, narrowingOf, scopeIn, teamsOf, type StatsPick } from '../hooks/stats-source'
+import type { CliRun, TeamrigCli } from '../hooks/teamrig-cli'
+import { HOUR, NOW } from './fixtures'
+import { areaCell, printed, refused, statsArea, statsDocument, statsTask } from './served-documents'
 
-const DAY = 24 * HOUR
-const TEAMS = 'K/teams'
-const ACME_HOME = `${TEAMS}/acme`
-const TOOLS_HOME = `${TEAMS}/tools`
-const FILES: TeamFiles = { team: 'acme', dir: ACME_HOME, teamsDir: TEAMS, config: `${ACME_HOME}/config.json`, renames: `${ACME_HOME}/state/renames.jsonl`, turnLog: null }
-/** The pane's register: the own team's events, outside its state folder. */
-const OWN_EVENTS = 'K/tasks/events.jsonl'
-const TOOLS_EVENTS = `${TOOLS_HOME}/state/events.jsonl`
-const OTHER_EVENTS = `${TEAMS}/other/state/events.jsonl`
-/** The own team's goal records, beside the pane's register. */
-const OWN_GOALS = 'K/tasks/goals.jsonl'
-const SETTINGS: StatsSettings = { events: OWN_EVENTS, goals: OWN_GOALS, zone: TimeZone.UTC, ownerMarker: 'owner' }
-const BUSY = 'EBUSY: resource busy or locked'
-const DENIED = 'EPERM: operation not permitted'
+const CLI: TeamrigCli = { kind: 'found', main: 'K/teamrig/dist/cli/main.js' }
+const CONVERSATION = 'c-1'
+/** The pane's team, shop, under acme. */
+const TREE: SessionsRead = {
+  self: null,
+  teams: [
+    { id: 'acme', parent: null, active: 1, retired: 0 },
+    { id: 'shop', parent: 'acme', active: 3, retired: 0 },
+    { id: 'tools', parent: 'shop', active: 1, retired: 0 },
+  ],
+  sessions: [],
+  failures: [],
+}
+const WHOLE: StatsPick = { scope: { kind: 'tree' }, range: '30d', list: null }
+const SHOP: StatsChoice = { kind: 'team', team: 'shop' }
 
-const ACME_CONFIG = { team: { id: 'acme' }, sessions: ['lead', 'api'], roles: { lead: 'lead' } }
-const TOOLS_CONFIG = { team: { id: 'tools', parent: 'acme' }, sessions: ['boss', 'dev'], roles: { lead: 'boss' } }
-/** A root team of its own: not in the tree that holds acme. */
-const OTHER_CONFIG = { team: { id: 'other' }, sessions: ['solo'], roles: { lead: 'solo' } }
+/** One run as the fake teamrig was asked it: the documents, and each flag's word. */
+type Asked = { readonly words: readonly string[] }
 
-/** acme: api works T1; lead's T2 waits on the owner's decision. */
-const ACME_LINES = [
-  createLine('T1', { at: NOW - 3 * DAY, by: 'lead', owner: 'api', title: 'Add the route' }),
-  statusLine('T1', 'api', NOW - 2 * DAY, 'in-progress'),
-  createLine('T2', { at: NOW - 2 * DAY, by: 'lead', owner: 'lead', title: 'Pick the database' }),
-  waitingLine('T2', 'lead', NOW - DAY, [{ kind: 'decision', who: 'owner' }]),
-]
-/** tools: dev fixed T3. */
-const TOOLS_LINES = [
-  createLine('T3', { at: NOW - 4 * DAY, by: 'boss', owner: 'dev', title: 'Fix the build' }),
-  statusLine('T3', 'dev', NOW - DAY, 'done', 'fixed', 'abc1234', 'none'),
-]
-const T4_CREATE = createLine('T4', { at: NOW - HOUR, by: 'boss', owner: 'dev', title: 'Speed up the build' })
-
-const text = (lines: readonly string[]) => lines.map(line => `${line}\n`).join('')
-const ACME: StatsTeam = { team: 'acme', lead: 'lead', events: readEvents(text(ACME_LINES)).events }
-const TOOLS: StatsTeam = { team: 'tools', lead: 'boss', events: readEvents(text(TOOLS_LINES)).events }
-
-const TREE: StatsPick = { scope: { kind: 'tree' }, range: '7d', list: null }
-const ACME_WEEK = weekFile(20, 30)
-const TOOLS_WEEK = weekFile(10, 15)
-const weekText = (week: TeamWeekSummary) => JSON.stringify({ v: TEAM_WEEK_FORMAT, ...week })
-
-/** A goal-add line of a goals file: `tag`, planned over October. */
-const goalLine = (tag: string, title: string) =>
-  JSON.stringify({ v: 1, type: 'goal-add', at: iso(NOW - 20 * DAY), by: 'lead', tag, title, start: '2026-10-01', target: '2026-10-31', parent: null })
-/** tools' goals file, in its state folder; other's, outside the tree. */
-const TOOLS_GOALS = `${TOOLS_HOME}/state/goals.jsonl`
-const OTHER_GOALS = `${TEAMS}/other/state/goals.jsonl`
-/** acme's goals: the one every fixture task serves, and a second. */
-const ACME_GOAL_LINES = [goalLine('G10.2', 'Ship the release'), goalLine('A2', 'Write the guide')]
-/** tools' goals: the same tag as acme's first, so tools' tasks read it as tools'. */
-const TOOLS_GOAL_LINES = [goalLine('G10.2', 'Speed up the builds')]
-const goalsIn = (...files: readonly (readonly string[])[]): ReadonlyMap<string, Goal> => new Map(files.flatMap(lines => [...readGoals(text(lines)).goals]))
-/** The goals a tree scope reads: acme's, with tools' on the tag both hold. */
-const TREE_GOALS = goalsIn(ACME_GOAL_LINES, TOOLS_GOAL_LINES)
-
-/** What the view of a fold is asked at, other than now: the scope's session and the goals its teams read. */
-type FoldedAt = { readonly at?: number; readonly session?: StatsScope; readonly goals?: ReadonlyMap<string, Goal> }
-
-/** The view teamrig's fold gives `teams` in the tree of acme and tools, its picked list as rows, with no week and no failure. */
-function folded(teams: readonly StatsTeam[], pick: StatsPick, { at = NOW, session, goals = new Map() }: FoldedAt = {}): StatsView {
-  const { tasks, goals: progress, areas, ...stats } = registerStats({ teams, range: pick.range, now: new Date(at), zone: TimeZone.UTC, ownerMarker: 'owner', goals, ...(session === undefined ? {} : { session }) })
-  const placedOf = placerOf(TimeZone.UTC)
-  const slim = slimAreas(areas, rows => plannedRows(rows, placedOf))
-  const picked = pick.list
-  const list =
-    picked === null
-      ? null
-      : typeof picked === 'string'
-        ? { kind: picked, rows: listsOf(tasks, TimeZone.UTC)[picked] }
-        : { kind: 'area' as const, area: picked, rows: slim.lists.get(areaListKey(picked)) ?? [] }
-  const numbers = { ...stats, goals: goalsOf(progress, TimeZone.UTC, TimeZone.UTC.day(new Date(at))), areas: slim.areas }
-  return { kind: 'stats', scope: pick.scope, range: pick.range, teams: ['acme', 'tools'], stats: numbers, health: registerHealth(stats), list, week: null, failures: [] }
+function flag(asked: Asked, name: string): string | null {
+  const at = asked.words.indexOf(name)
+  return at < 0 ? null : (asked.words[at + 1] ?? null)
 }
 
-/** Each goal of the view as its tag and title, in the view's order. */
-const goalTitles = (view: StatsView | undefined) => (view?.kind === 'stats' ? view.stats.goals.goals.map(goal => [goal.tag, goal.title]) : [])
-
-/** T4 to T9 as teamrig folds them: T4 and T6 p1, the rest p2; T4, T5 and T7 due, T6, T8 and T9 not. */
-const PLANNED = readRegister(
-  text([
-    createLine('T9', { at: NOW - DAY, by: 'lead', owner: 'api', priority: 2 }),
-    createLine('T8', { at: NOW - DAY, by: 'lead', owner: 'api', priority: 2 }),
-    createLine('T5', { at: NOW - DAY, by: 'lead', owner: 'api', priority: 2, due: '2026-10-16' }),
-    createLine('T7', { at: NOW - DAY, by: 'lead', owner: 'api', priority: 2, due: '2026-10-15' }),
-    createLine('T6', { at: NOW - DAY, by: 'lead', owner: 'api', priority: 1 }),
-    createLine('T4', { at: NOW - DAY, by: 'lead', owner: 'api', priority: 1, due: '2026-10-20' }),
-  ]),
-).state.tasks
-
-/** `id` of PLANNED as `team` holds it. */
-function plannedIn(team: string, id: string): StatsTask {
-  const task = PLANNED.get(id)
-  if (task === undefined) throw new Error(`no ${id} in PLANNED`)
-  return { team, task }
+/** What the reader makes of `document`; fails the test on one it could not read. */
+function readOf(document: JsonRecord, team: string): StatsRead {
+  const parsed = parseDocument(document)
+  if (parsed.kind !== 'document') throw new Error(`the fixture is no document: ${parsed.kind}`)
+  const read = statsOf(parsed.document, team)
+  if (read.kind !== 'read') throw new Error(read.reason)
+  return read.value
 }
 
-const planned = (id: string): StatsTask => plannedIn('acme', id)
-
-/** The fake disk with each path whose next reads fail, by path, until the test clears it. */
-class FailingFiles implements Files {
-  readonly disk: MemoryFiles
-  readonly failing = new Map<string, string>()
-
-  constructor(disk: MemoryFiles) {
-    this.disk = disk
-  }
-
-  stamp(path: string): Promise<FileStamp | null> {
-    return this.disk.stamp(path)
-  }
-
-  async read(path: string): Promise<string> {
-    const failure = this.failing.get(path)
-    if (failure !== undefined) throw new Error(failure)
-    return this.disk.read(path)
-  }
-}
-
-/** acme's and tools' configs and registers, and other's config and register beside their tree. */
-function teamsDisk(): MemoryFiles {
-  const disk = new MemoryFiles()
-  disk.write(FILES.config, JSON.stringify(ACME_CONFIG))
-  disk.write(`${TOOLS_HOME}/config.json`, JSON.stringify(TOOLS_CONFIG))
-  disk.write(`${TEAMS}/other/config.json`, JSON.stringify(OTHER_CONFIG))
-  disk.write(OWN_EVENTS, text(ACME_LINES))
-  disk.write(TOOLS_EVENTS, text(TOOLS_LINES))
-  disk.write(OTHER_EVENTS, text([createLine('T9', { at: NOW - DAY, by: 'solo', owner: 'solo' })]))
-  return disk
+/** The view of `document` read for `scope` over `pick`. */
+function shown(document: JsonRecord, scope: Exclude<StatsChoice, { kind: 'tree' }>, pick: StatsPick, over: Partial<Extract<StatsView, { kind: 'stats' }>> = {}): StatsView {
+  const read = readOf(document, scope.team)
+  return { kind: 'stats', scope, range: pick.range, teams: ['acme', 'shop'], stats: read.stats, health: read.health, list: null, week: null, failures: [], ...over }
 }
 
 /**
- * A LiveStats over the fake disk and a fake folder list, with whether the tab shows, the tab's pick and the clock's now
- * set by the test, and each write it made. A closed gate holds `choice` (after it took the pick) until it opens.
+ * A LiveStats over a fake teamrig whose answers the test queues (the last one repeats), with whether the tab shows,
+ * the tab's pick, the sessions held and the clock's now set by the test, each run it was asked and each write it made.
+ * A closed gate holds `choice` (after it took the pick) until it opens.
  */
-function fakeStats(disk: MemoryFiles, settings: StatsSettings = SETTINGS) {
-  const files = new FailingFiles(disk)
-  const shown = { tab: true }
+function fakeStats(cli: TeamrigCli = CLI) {
+  const answers: (CliRun | Error)[] = [printed(statsDocument('s1'))]
+  const runs: Asked[] = []
+  const shownTab = { tab: true }
   const clock = { now: NOW }
-  const pick: { value: StatsPick } = { value: TREE }
-  const listed: { names: readonly string[]; failure: string | null } = { names: ['acme', 'other', 'tools'], failure: null }
+  const pick: { value: StatsPick } = { value: WHOLE }
+  const sessions: { read: SessionsRead | null } = { read: TREE }
   const gate: { held: Promise<void> | null } = { held: null }
   const views: StatsView[] = []
   const writes = { fail: false }
-  const live = new LiveStats(files, FILES, settings, {
-    folders: async dir => {
-      if (listed.failure !== null) throw new Error(listed.failure)
-      return dir === TEAMS ? listed.names : []
+  const live = new LiveStats(cli, 'shop', {
+    run: async argv => {
+      runs.push({ words: argv.slice(argv.indexOf('read') + 1) })
+      const answer = answers.length > 1 ? answers.shift() : answers[0]
+      if (answer === undefined) throw new Error('no answer queued')
+      if (answer instanceof Error) throw answer
+      return answer
     },
-    isShown: async () => shown.tab,
+    conversation: async () => CONVERSATION,
+    sessions: () => sessions.read,
+    isShown: async () => shownTab.tab,
     choice: async () => {
       const value = pick.value
       if (gate.held !== null) await gate.held
@@ -195,330 +92,161 @@ function fakeStats(disk: MemoryFiles, settings: StatsSettings = SETTINGS) {
     },
     now: async () => clock.now,
   })
-  return { live, files, shown, clock, pick, listed, gate, views, writes }
+  return { live, answers, runs, shown: shownTab, clock, pick, sessions, gate, views, writes }
 }
 
+describe('teamsOf', () => {
+  test("lists the pane's team and the teams above it, the root first, never a team below", () => {
+    expect(teamsOf('shop', TREE)).toEqual(['acme', 'shop'])
+    expect(teamsOf('acme', TREE)).toEqual(['acme'])
+  })
+
+  test('with no sessions held, or its team not listed, it is the own team alone; a loop ends at the team met again', () => {
+    expect(teamsOf('shop', null)).toEqual(['shop'])
+    expect(teamsOf('else', TREE)).toEqual(['else'])
+    const loop: SessionsRead = { ...TREE, teams: [{ id: 'a', parent: 'b', active: 0, retired: 0 }, { id: 'b', parent: 'a', active: 0, retired: 0 }] }
+    expect(teamsOf('a', loop)).toEqual(['b', 'a'])
+  })
+})
+
+describe('scopeIn and narrowingOf', () => {
+  test("the tree, or a team the pane cannot read, reads the pane's own team", () => {
+    expect(scopeIn({ kind: 'tree' }, 'shop', ['acme', 'shop'])).toEqual(SHOP)
+    expect(scopeIn({ kind: 'team', team: 'tools' }, 'shop', ['acme', 'shop'])).toEqual(SHOP)
+    expect(scopeIn({ kind: 'session', team: 'gone', session: 'x' }, 'shop', ['acme', 'shop'])).toEqual(SHOP)
+    expect(scopeIn({ kind: 'team', team: 'acme' }, 'shop', ['acme', 'shop'])).toEqual({ kind: 'team', team: 'acme' })
+  })
+
+  test('names --team only for a team above, --owner for a session, and the range always', () => {
+    expect(narrowingOf(SHOP, '7d', 'shop')).toEqual({ range: '7d' })
+    expect(narrowingOf({ kind: 'team', team: 'acme' }, 'all', 'shop')).toEqual({ team: 'acme', range: 'all' })
+    expect(narrowingOf({ kind: 'session', team: 'shop', session: 'api' }, '90d', 'shop')).toEqual({ owner: 'api', range: '90d' })
+    expect(narrowingOf({ kind: 'session', team: 'acme', session: 'boss' }, '1y', 'shop')).toEqual({ team: 'acme', owner: 'boss', range: '1y' })
+  })
+})
+
 describe('LiveStats', () => {
-  test("folds the own register at the pane's register and a child team's in its state folder, never a team outside the tree; a refresh with nothing moved reads and writes nothing", async () => {
-    const disk = teamsDisk()
-    const { live, views } = fakeStats(disk)
+  test("reads the own team's stats in one run over the range, as the pane's conversation, and draws what teamrig counted", async () => {
+    const { live, runs, views } = fakeStats()
     await live.refresh()
-    expect(views).toEqual([folded([ACME, TOOLS], TREE)])
-    expect(disk.reads).toContain(OWN_EVENTS)
-    expect(disk.reads).toContain(TOOLS_EVENTS)
-    expect(disk.reads).not.toContain(`${ACME_HOME}/state/events.jsonl`)
-    expect(disk.reads).not.toContain(OTHER_EVENTS)
-
-    disk.reads.length = 0
-    await live.refresh()
-    expect([disk.reads, views.length]).toEqual([[], 1])
-
-    disk.write(TOOLS_EVENTS, text([...TOOLS_LINES, T4_CREATE]))
-    await live.refresh()
-    expect(disk.reads).toEqual([TOOLS_EVENTS])
-    expect(views.at(-1)).toEqual(folded([ACME, { ...TOOLS, events: readEvents(text([...TOOLS_LINES, T4_CREATE])).events }], TREE))
+    expect(runs.map(run => run.words)).toEqual([['stats', '--json', '--conversation', CONVERSATION, '--range', '30d']])
+    expect(views).toEqual([shown(statsDocument('s1'), SHOP, WHOLE)])
   })
 
-  test("a team's scope folds it and the teams under it, reading only their registers; a session's folds its tasks in its team", async () => {
-    const disk = teamsDisk()
-    const { live, pick, views } = fakeStats(disk)
-    pick.value = { scope: { kind: 'team', team: 'tools' }, range: '30d', list: null }
+  test("a session's scope reads its tasks by --owner, a team above by --team; each move reads anew, holding no revision", async () => {
+    const { live, runs, pick, views } = fakeStats()
     await live.refresh()
-    expect(views).toEqual([folded([TOOLS], pick.value)])
-    expect(disk.reads).not.toContain(OWN_EVENTS)
-
-    pick.value = { scope: { kind: 'team', team: 'acme' }, range: 'all', list: null }
+    const api: StatsPick = { scope: { kind: 'session', team: 'shop', session: 'api' }, range: '30d', list: null }
+    pick.value = api
     await live.refresh()
-    expect(views.at(-1)).toEqual(folded([ACME, TOOLS], pick.value))
-
-    pick.value = { scope: { kind: 'session', team: 'acme', session: 'api' }, range: '30d', list: null }
-    disk.reads.length = 0
+    const acme: StatsPick = { scope: { kind: 'team', team: 'acme' }, range: '7d', list: null }
+    pick.value = acme
     await live.refresh()
-    expect(views.at(-1)).toEqual(folded([ACME], pick.value, { session: { team: 'acme', session: 'api' } }))
-    expect(disk.reads).toEqual([])
+    expect(runs.map(run => [flag(run, '--owner'), flag(run, '--team'), flag(run, '--range'), flag(run, '--unless')])).toEqual([
+      [null, null, '30d', null],
+      ['api', null, '30d', null],
+      [null, 'acme', '7d', null],
+    ])
+    expect(views.at(-1)).toEqual(shown(statsDocument('s1'), { kind: 'team', team: 'acme' }, acme))
   })
 
-  test('a scope naming a team not in the tree folds the whole tree', async () => {
-    const disk = teamsDisk()
-    const { live, pick, views } = fakeStats(disk)
-    pick.value = { scope: { kind: 'team', team: 'other' }, range: '7d', list: null }
+  test('hands the revision held back, and an unchanged answer writes nothing; past validUntil it reads whole', async () => {
+    const { live, answers, runs, clock, views } = fakeStats()
     await live.refresh()
-    pick.value = { scope: { kind: 'session', team: 'gone', session: 'dev' }, range: '7d', list: null }
+    answers.splice(0, answers.length, printed({ interface: '1.6', document: 'stats', revision: 's1', unchanged: true, problems: [] }))
     await live.refresh()
-    expect(views).toEqual([folded([ACME, TOOLS], TREE)])
-    expect(disk.reads).not.toContain(OTHER_EVENTS)
-  })
-
-  test("folds again only when the minute moves, so a waiting owner's days move once a minute, not at every poll", async () => {
-    const disk = teamsDisk()
-    const { live, clock, views } = fakeStats(disk)
-    await live.refresh()
-    clock.now = NOW + TICK_MS - 1
-    await live.refresh()
+    expect(flag(runs[1] ?? { words: [] }, '--unless')).toBe('stats=s1')
     expect(views.length).toBe(1)
 
-    clock.now = NOW + TICK_MS
+    clock.now = NOW + HOUR
+    answers.splice(0, answers.length, printed(statsDocument('s2', { opened: 4 })))
     await live.refresh()
-    const later = folded([ACME, TOOLS], TREE, { at: NOW + TICK_MS })
-    expect(views).toEqual([folded([ACME, TOOLS], TREE), later])
-    expect(later.kind === 'stats' ? [later.health.ownerDecisions.count, later.stats.waits.ownerDecisions.oldestDays] : []).toEqual([1, (DAY + TICK_MS) / DAY])
+    expect(flag(runs[2] ?? { words: [] }, '--unless')).toBe(null)
+    expect(views.at(-1)).toEqual(shown(statsDocument('s2', { opened: 4 }), SHOP, WHOLE))
   })
 
-  test("a Health tile's pick publishes the tasks behind its count as slim rows, never the register's tasks; another list writes again with no read and no fold", async () => {
-    const disk = teamsDisk()
-    const { live, pick, views } = fakeStats(disk)
-    pick.value = { ...TREE, list: 'ownerDecisions' }
-    await live.refresh()
-    const first = views.at(-1)
-    expect(first).toEqual(folded([ACME, TOOLS], pick.value))
-    const decisions = first?.kind === 'stats' ? first.list : undefined
-    expect(decisions).toEqual({ kind: 'ownerDecisions', rows: [{ team: 'acme', id: 'T2', title: 'Pick the database', owner: 'lead', status: 'waiting', priority: 3, due: null }] })
-    expect(first?.kind === 'stats' ? Object.keys(first.stats) : ['no stats']).not.toContain('tasks')
-
-    disk.reads.length = 0
-    pick.value = { ...TREE, list: 'closed' }
-    await live.refresh()
-    pick.value = { ...TREE, list: 'ownerDecisions' }
-    await live.refresh()
-    expect(disk.reads).toEqual([])
-    const lists = views.map(view => (view.kind === 'stats' ? view.list : undefined))
-    expect(lists[1]).toEqual({ kind: 'closed', rows: [{ team: 'tools', id: 'T3', title: 'Fix the build', owner: 'dev', status: 'done', priority: 3, due: null }] })
-    // The same row object: the minute's fold was kept, not folded again for another list.
-    expect(lists[2]?.rows[0]).toBe(decisions?.rows[0])
-  })
-
-  test("an area cell's pick publishes its tasks as slim rows from the same fold; the areas carry counts, never tasks", async () => {
-    const disk = teamsDisk()
-    const { live, pick, views } = fakeStats(disk)
-    pick.value = { ...TREE, list: { team: 'acme', session: 'lead', measure: 'low' } }
-    await live.refresh()
-    const first = views.at(-1)
-    expect(first).toEqual(folded([ACME, TOOLS], pick.value))
-    expect(first?.kind === 'stats' ? first.list : undefined).toEqual({
-      kind: 'area',
-      area: { team: 'acme', session: 'lead', measure: 'low' },
-      rows: [{ team: 'acme', id: 'T2', title: 'Pick the database', owner: 'lead', status: 'waiting', priority: 3, due: null }],
+  test("a Health tile's pick lists the tasks behind its count from the document held; an area cell's lists its tasks", async () => {
+    const area = { team: 'shop', session: 'api', measure: 'bugs' } as const
+    const document = statsDocument('s1', {
+      tasks: [statsTask('T1'), statsTask('T2', { priority: 1 })],
+      areas: { teams: { areas: [], median: { bugs: 0, p1: 0, p1Late: 0, low: 0, waits: 0, active: 0 } }, sessions: { areas: [statsArea('api', { bugs: areaCell(['T2']) })], median: { bugs: 0, p1: 0, p1Late: 0, low: 0, waits: 0, active: 0 } } },
     })
-    const lead = first?.kind === 'stats' ? first.stats.areas.sessions.areas.find(area => area.session === 'lead') : undefined
-    expect(lead?.cells.low.listed).toBe(1)
-    expect(JSON.stringify(first?.kind === 'stats' ? first.stats.areas : null)).not.toContain('"tasks"')
-
-    disk.reads.length = 0
-    pick.value = { ...TREE, list: { team: 'acme', session: 'gone', measure: 'bugs' } }
+    const { live, answers, pick, views } = fakeStats()
+    answers.splice(0, answers.length, printed(document))
+    pick.value = { ...WHOLE, list: 'active' }
     await live.refresh()
-    expect(disk.reads).toEqual([])
-    const gone = views.at(-1)
-    expect(gone?.kind === 'stats' ? gone.list : undefined).toEqual({ kind: 'area', area: { team: 'acme', session: 'gone', measure: 'bugs' }, rows: [] })
+    const read = readOf(document, 'shop')
+    expect(views.at(-1)).toEqual(shown(document, SHOP, pick.value, { list: { kind: 'active', rows: read.lists.active } }))
+
+    pick.value = { ...WHOLE, list: area }
+    await live.refresh()
+    expect(views.at(-1)).toEqual(shown(document, SHOP, pick.value, { list: { kind: 'area', area, rows: read.areaLists.get(areaListKey(area)) ?? [] } }))
+    expect(read.areaLists.get(areaListKey(area))?.map(row => row.id)).toEqual(['T2'])
   })
 
-  test("the scope's week sums its teams' week files, a session's its team's", async () => {
-    const disk = teamsDisk()
-    disk.write(`${ACME_HOME}/state/usage/team.week.json`, weekText(ACME_WEEK))
-    disk.write(`${TOOLS_HOME}/state/usage/team.week.json`, weekText(TOOLS_WEEK))
-    const { live, pick, views } = fakeStats(disk)
+  test('a failed run before any read fails the view; after one it draws the numbers last read, named with why', async () => {
+    const { live, answers, views } = fakeStats()
+    answers.splice(0, answers.length, refused('no team here'))
     await live.refresh()
-    pick.value = { scope: { kind: 'session', team: 'tools', session: 'dev' }, range: '7d', list: null }
+    expect(views).toEqual([{ kind: 'failed', reason: 'REFUSED no team here' }])
+
+    answers.splice(0, answers.length, printed(statsDocument('s1')), refused('busy'))
     await live.refresh()
-    const weeks = views.map(view => (view.kind === 'stats' ? view.week : undefined))
-    expect(weeks).toEqual([weekOf([ACME_WEEK, TOOLS_WEEK], NOW), weekOf([TOOLS_WEEK], NOW)])
-    expect(weeks[0]).not.toEqual(weeks[1])
+    await live.refresh()
+    expect(views.at(-1)).toEqual(shown(statsDocument('s1'), SHOP, WHOLE, { failures: [{ team: 'shop', reason: 'REFUSED busy', isLastRead: true }] }))
   })
 
-  test("a state folder the peer's config moves reads its register from there; a team folder no longer listed is read anew when listed again", async () => {
-    const disk = teamsDisk()
-    const { live, listed, views } = fakeStats(disk)
+  test('an unreadable document keeps the numbers last read with why; a missing CLI fails the view', async () => {
+    const { live, answers, views } = fakeStats()
     await live.refresh()
-    disk.write(`${TOOLS_HOME}/config.json`, JSON.stringify({ ...TOOLS_CONFIG, paths: { state: 'kept' } }))
-    disk.write(`${TOOLS_HOME}/kept/events.jsonl`, text([T4_CREATE]))
+    answers.splice(0, answers.length, printed(statsDocument('s2', { opened: '1' })))
     await live.refresh()
-    expect(views.at(-1)).toEqual(folded([ACME, { ...TOOLS, events: readEvents(text([T4_CREATE])).events }], TREE))
+    expect(views.at(-1)).toEqual(
+      shown(statsDocument('s1'), SHOP, WHOLE, { failures: [{ team: 'shop', reason: "teamrig's stats document cannot be read (opened): update teamrig", isLastRead: true }] }),
+    )
 
-    listed.names = ['acme']
-    await live.refresh()
-    listed.names = ['acme', 'tools']
-    disk.reads.length = 0
-    await live.refresh()
-    expect(disk.reads).toEqual([`${TOOLS_HOME}/config.json`, `${TOOLS_HOME}/kept/events.jsonl`])
-  })
-
-  test("a folder list, the own team's folder or the own register that fails before any read of it worked fails the view; no config is no team", async () => {
-    const disk = teamsDisk()
-    const { live, files, listed, views } = fakeStats(disk)
-    listed.failure = 'EACCES: permission denied, scandir K/teams'
-    await live.refresh()
-    listed.failure = null
-    disk.failNextRead = BUSY
-    await live.refresh()
-    files.failing.set(OWN_EVENTS, DENIED)
-    await live.refresh()
-    expect(views).toEqual([
-      { kind: 'failed', reason: 'EACCES: permission denied, scandir K/teams' },
-      { kind: 'failed', reason: BUSY },
-      { kind: 'failed', reason: DENIED },
-    ])
-
-    files.failing.clear()
-    await live.refresh()
-    expect(views.at(-1)).toEqual(folded([ACME, TOOLS], TREE))
-
-    disk.remove(FILES.config)
-    await live.refresh()
-    expect(views.at(-1)).toEqual({ kind: 'no-team' })
-  })
-
-  test("a register whose read fails is left out before a read of it worked, else folded as it last read, named with why; the next read that works clears it", async () => {
-    const disk = teamsDisk()
-    const { live, files, views } = fakeStats(disk)
-    files.failing.set(TOOLS_EVENTS, BUSY)
-    await live.refresh()
-    expect(views).toEqual([{ ...folded([ACME], TREE), failures: [{ team: 'tools', reason: BUSY, isLastRead: false }] }])
-
-    files.failing.clear()
-    await live.refresh()
-    expect(views.at(-1)).toEqual(folded([ACME, TOOLS], TREE))
-
-    disk.write(TOOLS_EVENTS, text([...TOOLS_LINES, T4_CREATE]))
-    disk.write(OWN_EVENTS, text([...ACME_LINES, T4_CREATE]))
-    files.failing.set(TOOLS_EVENTS, BUSY)
-    files.failing.set(OWN_EVENTS, BUSY)
-    await live.refresh()
-    const failures = [
-      { team: 'acme', reason: BUSY, isLastRead: true },
-      { team: 'tools', reason: BUSY, isLastRead: true },
-    ]
-    expect(views.at(-1)).toEqual({ ...folded([ACME, TOOLS], TREE), failures })
-  })
-
-  test('a peer folder whose read fails is left out before a read of it worked, named with why', async () => {
-    const disk = teamsDisk()
-    const { live, files, views } = fakeStats(disk)
-    files.failing.set(`${TOOLS_HOME}/config.json`, BUSY)
-    await live.refresh()
-    expect(views).toEqual([{ ...folded([ACME], TREE), teams: ['acme'], failures: [{ team: 'tools', reason: BUSY, isLastRead: false }] }])
-  })
-
-  test("folds each goal over the scoped teams' goals and those of the teams above them, a tag two teams hold read as the nearer team's; the view holds a goal's tasks as rows", async () => {
-    const disk = teamsDisk()
-    disk.write(OWN_GOALS, text(ACME_GOAL_LINES))
-    disk.write(TOOLS_GOALS, text(TOOLS_GOAL_LINES))
-    disk.write(OTHER_GOALS, text([goalLine('O1', 'Run elsewhere')]))
-    const { live, pick, views } = fakeStats(disk)
-    await live.refresh()
-    expect(views).toEqual([folded([ACME, TOOLS], TREE, { goals: TREE_GOALS })])
-    expect(goalTitles(views[0])).toEqual([
-      ['G10.2', 'Speed up the builds'],
-      ['A2', 'Write the guide'],
-    ])
-    const goal = views[0]?.kind === 'stats' ? views[0].stats.goals.goals[0] : undefined
-    expect(goal?.rows.map(row => `${row.team}/${row.id}`)).toEqual(['acme/T1', 'acme/T2', 'tools/T3'])
-    expect(Object.keys(goal ?? {})).not.toContain('tasks')
-    expect(disk.reads).not.toContain(OTHER_GOALS)
-
-    pick.value = { scope: { kind: 'team', team: 'tools' }, range: '7d', list: null }
-    await live.refresh()
-    expect(views.at(-1)).toEqual(folded([TOOLS], pick.value, { goals: TREE_GOALS }))
-
-    pick.value = { scope: { kind: 'session', team: 'acme', session: 'api' }, range: '7d', list: null }
-    await live.refresh()
-    expect(views.at(-1)).toEqual(folded([ACME], pick.value, { session: { team: 'acme', session: 'api' }, goals: goalsIn(ACME_GOAL_LINES) }))
-    expect(goalTitles(views.at(-1))[0]).toEqual(['G10.2', 'Ship the release'])
-  })
-
-  test("the goals' day is the team's, from the minute the fold counted them at", async () => {
-    const zone = TimeZone.of('Pacific/Kiritimati')
-    if (zone === undefined) throw new Error('the host knows no Pacific/Kiritimati')
-    const days: string[] = []
-    for (const settings of [SETTINGS, { ...SETTINGS, zone }]) {
-      const { live, views } = fakeStats(teamsDisk(), settings)
-      await live.refresh()
-      const view = views[0]
-      days.push(view?.kind === 'stats' ? view.stats.goals.today : '')
-    }
-    expect(days).toEqual(['2026-10-13', '2026-10-14'])
-  })
-
-  test('a goals file is read again only when its stamp moves, and a change folds again inside the minute', async () => {
-    const disk = teamsDisk()
-    disk.write(OWN_GOALS, text(ACME_GOAL_LINES))
-    const { live, views } = fakeStats(disk)
-    await live.refresh()
-    disk.reads.length = 0
-    await live.refresh()
-    expect([disk.reads, views.length]).toEqual([[], 1])
-
-    const moved = [...ACME_GOAL_LINES, goalLine('A3', 'Open the beta')]
-    disk.write(OWN_GOALS, text(moved))
-    await live.refresh()
-    expect(disk.reads).toEqual([OWN_GOALS])
-    expect(views.at(-1)).toEqual(folded([ACME, TOOLS], TREE, { goals: goalsIn(moved) }))
-  })
-
-  test("a goals file whose read fails never fails the view: its goals fold as last read, or as none before a read, its team named once", async () => {
-    const disk = teamsDisk()
-    disk.write(OWN_GOALS, text(ACME_GOAL_LINES))
-    disk.write(TOOLS_GOALS, text(TOOLS_GOAL_LINES))
-    const { live, files, views } = fakeStats(disk)
-    files.failing.set(OWN_GOALS, BUSY)
-    await live.refresh()
-    expect(views).toEqual([{ ...folded([ACME, TOOLS], TREE, { goals: goalsIn(TOOLS_GOAL_LINES) }), failures: [{ team: 'acme', reason: BUSY, isLastRead: false }] }])
-
-    files.failing.clear()
-    await live.refresh()
-    expect(views.at(-1)).toEqual(folded([ACME, TOOLS], TREE, { goals: TREE_GOALS }))
-
-    disk.write(OWN_GOALS, text([goalLine('A3', 'Open the beta')]))
-    disk.write(TOOLS_GOALS, text([goalLine('A4', 'Cut the cost')]))
-    disk.write(TOOLS_EVENTS, text([...TOOLS_LINES, T4_CREATE]))
-    files.failing.set(OWN_GOALS, BUSY)
-    files.failing.set(TOOLS_GOALS, DENIED)
-    files.failing.set(TOOLS_EVENTS, BUSY)
-    await live.refresh()
-    const failures = [
-      { team: 'tools', reason: BUSY, isLastRead: true },
-      { team: 'acme', reason: BUSY, isLastRead: true },
-    ]
-    expect(views.at(-1)).toEqual({ ...folded([ACME, TOOLS], TREE, { goals: TREE_GOALS }), failures })
+    const missing = fakeStats({ kind: 'missing', problem: 'teamrig is not installed' })
+    await missing.live.refresh()
+    expect(missing.views).toEqual([{ kind: 'failed', reason: 'teamrig is not installed' }])
+    expect(missing.runs).toEqual([])
   })
 
   test('a poll reads only while the tab shows; a write that failed is made by the next refresh', async () => {
-    const disk = teamsDisk()
-    const { live, shown, views, writes } = fakeStats(disk)
-    shown.tab = false
+    const { live, runs, shown: tab, views, writes } = fakeStats()
+    tab.tab = false
     await live.poll()
-    expect([views.length, disk.reads.length]).toEqual([0, 0])
+    expect([views.length, runs.length]).toEqual([0, 0])
 
-    shown.tab = true
+    tab.tab = true
     writes.fail = true
     await live.poll()
     expect(views.length).toBe(0)
 
     writes.fail = false
     await live.refresh()
-    expect(views).toEqual([folded([ACME, TOOLS], TREE)])
+    expect(views).toEqual([shown(statsDocument('s1'), SHOP, WHOLE)])
   })
 
   test('a refresh asked while one reads runs again after it, so a press during a poll is not lost', async () => {
-    const disk = teamsDisk()
-    const { live, pick, gate, views } = fakeStats(disk)
+    const { live, pick, gate, views } = fakeStats()
     let open = () => {}
     gate.held = new Promise<void>(resolve => {
       open = resolve
     })
     const first = live.refresh()
-    const tools: StatsPick = { scope: { kind: 'team', team: 'tools' }, range: '7d', list: null }
-    pick.value = tools
+    const week: StatsPick = { ...WHOLE, range: '7d' }
+    pick.value = week
     gate.held = null
     await live.refresh()
     expect(views).toEqual([])
 
     open()
     await first
-    expect(views).toEqual([folded([ACME, TOOLS], TREE), folded([TOOLS], tools)])
+    expect(views).toEqual([shown(statsDocument('s1'), SHOP, WHOLE), shown(statsDocument('s1'), SHOP, week)])
   })
 
   test('its timer polls every POLL_MS until stopped', async () => {
-    const disk = teamsDisk()
-    const { live, views } = fakeStats(disk)
+    const { live, views } = fakeStats()
     const timers: { ms: number; fn: () => void; cancelled: boolean }[] = []
     live.startTimers((ms, fn) => {
       const timer = { ms, fn, cancelled: false }
@@ -531,97 +259,5 @@ describe('LiveStats', () => {
     expect(views.length).toBe(1)
     live.stop()
     expect(timers[0]?.cancelled).toBe(true)
-  })
-})
-
-describe('listsOf', () => {
-  const NONE: StatsTasks = { active: [], opened: [], closed: [], overdue: [], overdueP1: [], ownerDecisions: [] }
-  const ids = (rows: readonly { readonly id: string }[]) => rows.map(row => row.id)
-
-  test('lists each count p1 first, then by due date, undated last, then the oldest task first', () => {
-    const lists = listsOf({ ...NONE, active: ['T9', 'T8', 'T5', 'T7', 'T6', 'T4'].map(planned) }, TimeZone.UTC)
-    expect(ids(lists.active)).toEqual(['T4', 'T6', 'T7', 'T5', 'T8', 'T9'])
-    expect(lists.active[0]).toEqual({ team: 'acme', id: 'T4', title: 'task T4', owner: 'api', status: 'open', priority: 1, due: '2026-10-20' })
-  })
-
-  test("keeps the owner's waits in teamrig's order, the oldest wait first", () => {
-    const lists = listsOf({ ...NONE, ownerDecisions: ['T9', 'T4', 'T6'].map(planned) }, TimeZone.UTC)
-    expect(ids(lists.ownerDecisions)).toEqual(['T9', 'T4', 'T6'])
-  })
-
-  test("a task in two lists is one row in both; another team's task of the same id is its own row", () => {
-    const lists = listsOf({ ...NONE, overdue: [planned('T4')], overdueP1: [planned('T4')], opened: [plannedIn('tools', 'T4')] }, TimeZone.UTC)
-    expect(lists.overdueP1[0]).toBe(lists.overdue[0])
-    expect(lists.opened[0]).not.toBe(lists.overdue[0])
-    expect(lists.opened[0]?.team).toBe('tools')
-  })
-
-  test("parses each task's due once, however many lists it is in and however long they are", () => {
-    const zone = TimeZone.of('Asia/Jerusalem')
-    if (zone === undefined) throw new Error('no Asia/Jerusalem zone on this system')
-    const instant = zone.instant.bind(zone)
-    let parses = 0
-    zone.instant = (wall, secondMs) => {
-      parses += 1
-      return instant(wall, secondMs)
-    }
-    const all = ['T9', 'T8', 'T5', 'T7', 'T6', 'T4'].map(planned)
-    for (const { task } of all) dueTime(task, zone)
-    const once = parses
-    parses = 0
-    listsOf({ ...NONE, active: all, opened: all, closed: all }, zone)
-    expect(once).toBe(3)
-    expect(parses).toBe(once)
-  })
-})
-
-describe('goalsOf', () => {
-  /** T10 done two days ago, T11 a day ago, T12 dropped. */
-  const CLOSED = readRegister(
-    text([
-      createLine('T10', { at: NOW - 3 * DAY, by: 'lead', owner: 'api' }),
-      statusLine('T10', 'api', NOW - 2 * DAY, 'done', 'fixed', 'abc1234', 'none'),
-      createLine('T11', { at: NOW - 3 * DAY, by: 'lead', owner: 'api' }),
-      statusLine('T11', 'api', NOW - DAY, 'done', 'fixed', 'abc1235', 'none'),
-      createLine('T12', { at: NOW - 3 * DAY, by: 'lead', owner: 'api' }),
-      statusLine('T12', 'api', NOW - DAY, 'dropped', 'not needed'),
-    ]),
-  ).state.tasks
-
-  function closed(id: string): StatsTask {
-    const task = CLOSED.get(id)
-    if (task === undefined) throw new Error(`no ${id} in CLOSED`)
-    return { team: 'acme', task }
-  }
-
-  /** A goal on track over October whose progress folded `tasks`. */
-  const progress = (tasks: readonly StatsTask[]): GoalProgress => ({
-    tag: 'G10.2',
-    title: 'Ship the release',
-    start: '2026-10-01',
-    target: '2026-10-31',
-    parent: null,
-    slips: [],
-    done: 2,
-    open: 3,
-    doneDays: [],
-    pace: 0,
-    forecast: null,
-    state: 'on track',
-    tasks,
-  })
-
-  test('lists the active tasks p1 first, then by due date, then the done ones, the latest done first; a dropped one is left out', () => {
-    const tasks = [closed('T12'), closed('T10'), planned('T9'), planned('T4'), closed('T11'), planned('T6')]
-    const { goals, ...counts } = goalsOf({ goals: [progress(tasks)], offGoal: 1, doneInRange: 3 }, TimeZone.UTC, '2026-10-31')
-    expect(counts).toEqual({ today: '2026-10-31', offGoal: 1, doneInRange: 3 })
-    expect(goals.map(goal => [goal.tag, goal.state, goal.rows.map(row => row.id)])).toEqual([['G10.2', 'on track', ['T4', 'T6', 'T9', 'T11', 'T10']]])
-  })
-
-  test("a task the Health lists hold too is the same row, its due parsed once", () => {
-    const placedOf = placerOf(TimeZone.UTC)
-    const lists = listsOf({ active: [planned('T4')], opened: [], closed: [], overdue: [], overdueP1: [], ownerDecisions: [] }, TimeZone.UTC, placedOf)
-    const { goals } = goalsOf({ goals: [progress([planned('T4')])], offGoal: 0, doneInRange: 0 }, TimeZone.UTC, '2026-10-31', placedOf)
-    expect(goals[0]?.rows[0]).toBe(lists.active[0])
   })
 })

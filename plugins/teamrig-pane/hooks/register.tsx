@@ -665,16 +665,17 @@ export const register: Register = on => {
             })
       scheduling = meetingsLive
       if (meetingsLive === null) await update($, meetings, () => NO_TEAM_MEETINGS)
-      // The own team's register, zone and owner's marker: the day and the owner's waits of every team the fold takes in.
+      // teamrig counts the stats (`teamrig read stats`); the held sessions document places the teams above the pane's.
       const statsLive =
-        teamFiles === null || 'missing' in registerAt
+        teamFiles === null
           ? null
           : new LiveStats(
-              files,
-              teamFiles,
-              { events: registerAt.paths.events, goals: registerAt.paths.goals, zone: zoneNamed(registerAt.settings.timeZone), ownerMarker: registerAt.settings.ownerSource },
+              cli,
+              teamFiles.team,
               {
-                folders,
+                run: (argv, timeoutMs) => run(argv, { cwd: e.cwd, timeoutMs }),
+                conversation: () => $.session.id(),
+                sessions: () => sessionsRead(),
                 isShown: async () => (await read($, view)) === 'stats' && (await read($, size)) !== 'minimized',
                 choice: async () => ({ scope: await read($, statsScope), range: await read($, statsRange), list: await read($, statsList) }),
                 publish: async shown => {

@@ -7,7 +7,7 @@ import { readEvents, registerStats, TimeZone, type RegisterHealth, type TeamPart
 import type { Block, Row, Span } from '../hooks/rows'
 import { bar } from '../hooks/stats-chart'
 import { slimAreas } from '../hooks/stats-areas'
-import { goalsOf } from '../hooks/stats-source'
+import { goalsOf } from './stats-goals'
 import { BOTTLENECKS_KEY } from '../hooks/stats-bottlenecks'
 import { BUGS_KEY, DELAYS_KEY, NEW_KEY, PEOPLE_KEY, PEOPLE_ROWS, SECTION_KEYS, SPEED_KEY, WAITS_KEY, sectionBlocks, shareCells } from '../hooks/stats-sections'
 import { cells } from '../hooks/width'
