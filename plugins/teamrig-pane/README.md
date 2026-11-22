@@ -566,7 +566,9 @@ It runs the CLI of the teamrig plugin installed in Claude Code, found once a ses
 (`plugins/installed_plugins.json` under `$CLAUDE_CONFIG_DIR`, else `~/.claude`), else as the `dist/cli/main.js` beside
 the first `teamrig` (or `teamrig.cmd`) command on the PATH, as with a teamrig folder loaded by `--plugin-dir` (a linked
 or npm-made shim is not followed), with `node`: teamrig 0.208.0 or
-later and `node` on the PATH. It reads the list when the view opens and every 60 s while it shows, giving teamrig
+later and `node` on the PATH. The dedicated UI, which runs under any AI CLI, runs the CLI `teamrig ui` names in
+`TEAMRIG_CLI`, else the one beside the `teamrig` command on the PATH, and only then the one in Claude Code's plugin
+list. It reads the list when the view opens and every 60 s while it shows, giving teamrig
 30 s to answer and a start 60 s; on another view, or minimized, it runs nothing. A list it cannot read says why: no
 teamrig plugin, one too old to print the list, or teamrig's own error. A meeting in a newer format than the pane
 reads is counted on a `WARN` line, the rest still shown. There is no Find field: a schedule is a few rows.
