@@ -38,6 +38,14 @@ export const STDERR_KEPT_CHARS = 2_000
 /** What `return()` hands the stream: the loop is left, and the engine kills the child. */
 const STOPPED: SpawnEnd = { code: null, signal: null }
 
+/**
+ * The documents a follower as `asker` can serve: the inbox is one session's, and teamrig refuses the whole stream that
+ * asks for it naming none, so with no session it is left out (the refresher's tick reads it as no stream served it).
+ */
+export function followable(documents: readonly string[], asker: ReadAsker): readonly string[] {
+  return asker.session === null ? documents.filter(document => document !== 'inbox') : documents
+}
+
 /** The CLI's words following `documents` as `asker`. */
 export function eventsWords(documents: readonly string[], asker: ReadAsker): string[] {
   return ['events', '--json', '--documents', documents.join(','), ...askerWords(asker)]
@@ -79,7 +87,10 @@ export function spawnFeed(ports: SpawnFeedPorts): ChangeFeed {
         }
         if (isStopped) return
         if (cli.kind === 'missing') return end('unavailable')
-        const child = ports.spawn({ argv: cliArgv(cli.main, eventsWords(documents, ports.asker())) })
+        const asker = ports.asker()
+        const followed = followable(documents, asker)
+        if (followed.length === 0) return end('unavailable')
+        const child = ports.spawn({ argv: cliArgv(cli.main, eventsWords(followed, asker)) })
         stream = child
         let hasPulled = false
         let stderr = ''
