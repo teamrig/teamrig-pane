@@ -512,6 +512,39 @@ describe('DocumentSource: the documents it holds for a caller', () => {
     expect(source.sessionsRead?.self).toEqual({ team: 'shop', session: 'api' })
     expect(source.settingsRead?.kind).toBe('team')
   })
+
+  test('each revision held by the name teamrig events gives it, none before a read or for a name it does not hold', async () => {
+    const { source } = rig()
+    expect(['tasks', 'sessions', 'config', 'plan', 'inbox'].map(name => source.heldRevision(name))).toEqual([null, null, null, null, null])
+    await drawn(source)
+    expect(['tasks', 'sessions', 'config', 'plan', 'inbox', 'stats'].map(name => source.heldRevision(name))).toEqual(['t1', 's1', 'c1', 'p1', 'i1', null])
+  })
+
+  test('the asker is the last run that answered: the session whose inbox it read, as the conversation', async () => {
+    const { source } = rig()
+    expect(source.asker).toBeNull()
+    await drawn(source)
+    expect(source.asker).toEqual({ session: 'api', conversation: 'c-1' })
+  })
+
+  test('a run that failed leaves the asker of the last one that answered', async () => {
+    const { teamrig, files, source } = rig()
+    await drawn(source)
+    teamrig.broken = new Error('cannot start node')
+    files.next = BASE
+    await drawn(source, { claudeSession: 'c-2', force: true })
+    expect(source.asker).toEqual({ session: 'api', conversation: 'c-1' })
+  })
+
+  test('a session retired since it was held leaves the asker naming none', async () => {
+    const { teamrig, files, source } = rig()
+    await drawn(source)
+    teamrig.inboxes = {}
+    teamrig.sessions = sessionsDocument('s2', { self: null, sessions: [session('lead', null), session('web', 'lead')] })
+    files.next = BASE
+    await drawn(source, { pinned: 'api' })
+    expect(source.asker).toEqual({ session: null, conversation: 'c-1' })
+  })
 })
 
 /** The ids of the plan a snapshot carries, in its order; null with no plan. */
