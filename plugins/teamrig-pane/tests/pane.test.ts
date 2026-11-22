@@ -6,6 +6,7 @@ import { LABEL_CELLS } from '../hooks/card'
 import { READ_EVERY_MS } from '../hooks/document-source'
 import { barKeys, KEY_GROUPS } from '../hooks/keys-page'
 import { POLL_MS } from '../hooks/live'
+import { POLL_MS as REGISTER_POLL } from '../hooks/refresher'
 import type { Files } from '../hooks/source'
 import type { CliRun } from '../hooks/teamrig-cli'
 import { cells } from '../hooks/width'
@@ -511,7 +512,7 @@ test('a filter whose status empties keeps its count at 0 and says nothing is lef
   expect(await pane.find({ text: /Ship the task pane/ })).toBeDefined()
 
   disk.write(EVENTS, [...lines, statusLine('T1', 'po', NOW, 'in-progress')])
-  await clock.advance(3_000)
+  await clock.advance(REGISTER_POLL)
   expect(await pane.find({ type: 'Text', text: /^0 waiting$/ })).toMatchObject({ props: { bold: true } })
   expect(await pane.find({ text: 'Nothing waiting.' })).toBeDefined()
   expect(await pane.find({ text: /Ship the task pane|Check the roll/ })).toBeUndefined()
@@ -550,7 +551,7 @@ test('picks up a new register event on the next poll', async ($, on) => {
     createLine('T1', { owner: 'po', by: 'lead', at: NOW - HOUR, priority: 2, title: 'Ship the task pane' }),
     statusLine('T1', 'po', NOW, 'done'),
   ])
-  await clock.advance(3_000)
+  await clock.advance(REGISTER_POLL)
   expect(await pane.find({ text: /Done today \(1\)/ })).toBeDefined()
   expect(await pane.find({ text: /\bnew\b/ })).toBeUndefined()
 })
@@ -570,12 +571,12 @@ test('a locked or denied register file keeps the last good tasks drawn under the
     disk.lock(EVENTS, lock)
     // A read happens only once the file moved.
     disk.write(EVENTS, [createLine('T1', { owner: 'po', by: 'lead', at: NOW - HOUR, title: 'Ship the task pane' }), statusLine('T1', 'po', NOW, 'in-progress', `step ${i}`)])
-    await clock.advance(3_000)
+    await clock.advance(REGISTER_POLL)
     expect(await pane.find({ text: /Ship the task pane/ })).toBeDefined()
     expect(await pane.find({ text: new RegExp(`WARN .*${lock.message.slice(0, 6)}`) })).toBeDefined()
 
     disk.unlock(EVENTS)
-    await clock.advance(3_000)
+    await clock.advance(REGISTER_POLL)
     expect(await pane.find({ text: /WARN/ })).toBeUndefined()
     expect(await pane.find({ text: /Ship the task pane/ })).toBeDefined()
   }
@@ -612,18 +613,18 @@ test('missing register, marks and inbox files draw an empty register with no pro
   expect(await pane.find({ text: /WARN/ })).toBeUndefined()
 
   disk.write(MARKS, [markLine('po', 1, S1, NOW, 'line one')])
-  await clock.advance(3_000)
+  await clock.advance(REGISTER_POLL)
   expect(await pane.find({ text: /Nothing active\./ })).toBeDefined()
   expect(keyedProps(await pane.drawn(), 'inbox')).toMatchObject({ label: 'Inbox' })
 
   disk.write(EVENTS, [createLine('T1', { owner: 'po', by: 'lead', at: NOW - HOUR, title: 'Ship the task pane' })])
   disk.write(INBOX, ['line one', 'line two'])
-  await clock.advance(3_000)
+  await clock.advance(REGISTER_POLL)
   expect(await pane.find({ text: /Ship the task pane/ })).toBeDefined()
   expect(keyedProps(await pane.drawn(), 'inbox')).toMatchObject({ label: 'Inbox (1)' })
 
   disk.remove(EVENTS)
-  await clock.advance(3_000)
+  await clock.advance(REGISTER_POLL)
   expect(await pane.find({ text: /Nothing active\./ })).toBeDefined()
   expect(await pane.find({ text: /WARN/ })).toBeUndefined()
 })
@@ -642,7 +643,7 @@ test('a register of 2,000 events is read once: a redraw, a switch of view and a 
   // The all view leads with the session's own group, the 40 of po; every other session's task finished a month ago.
   expect(await pane.find({ text: /^po \(you\) · 40 active/ })).toBeDefined()
   expect(disk.reads.length).toBe(reads)
-  await clock.advance(3_000)
+  await clock.advance(REGISTER_POLL)
   expect(disk.reads.length).toBe(reads)
   // The work bound is proven by the reads above; wall time only guards against a slowdown many times over, since gates
   // run at below-normal CPU priority beside other sessions' work.
@@ -1061,7 +1062,7 @@ test('/teamrig-pane <session> pins the session an id or a name names; a word nam
   // The name the user renamed the session to since the pane started is known once the next poll sees the rename log
   // move and reads the sessions again: the command looks its word up in the sessions as last read.
   disk.write(`${team}/state/renames.jsonl`, [JSON.stringify({ v: 1, id: 'api', from: 'web-backend', to: 'web-api', at: iso(NOW), by: 'api' })])
-  await clock.advance(POLL_MS)
+  await clock.advance(REGISTER_POLL)
   expect((await run('Web-API')).text).toBeUndefined()
   expect(store.get(`pin:${S1}`)).toBe('api')
   expect(await pane.find({ text: /^api \(pinned\) · 1 active/ })).toBeDefined()
@@ -1509,7 +1510,7 @@ test('the band above the prompt names the task up next, follows a status change,
     createLine('T1', { owner: 'po', by: 'lead', at: NOW - HOUR, priority: 2, title: 'Ship the task pane' }),
     statusLine('T1', 'po', NOW, 'in-progress', 'halfway'),
   ])
-  await clock.advance(3_000)
+  await clock.advance(REGISTER_POLL)
   expect(await banner()).toMatch(/^web-po · working on · ◐ T1 {2}Ship the task pane/)
   expect(await banner()).not.toMatch(/Note/)
 
@@ -1689,13 +1690,13 @@ test('the band draws nothing for a session with no area, then says its area has 
   expect(passes).toEqual([false])
 
   disk.write(MARKS, [markLine('po', 1, S1, NOW, 'line one')])
-  await clock.advance(3_000)
+  await clock.advance(REGISTER_POLL)
   expect(await bannerText(band)).toBe(`web-po · ${NOTHING_CURRENT}`)
   // With nothing current there is no page to open: no open button.
   expect(buttonKeys(await band.drawn())).toEqual([BANNER_KEY])
 
   disk.write(EVENTS, [createLine('T1', { owner: 'po', by: 'lead', at: NOW - HOUR, title: 'Ship the task pane' })])
-  await clock.advance(3_000)
+  await clock.advance(REGISTER_POLL)
   expect(await bannerText(band)).toMatch(/^web-po · up next · ○ T1 {2}Ship the task pane/)
 })
 
@@ -2700,7 +2701,7 @@ test('mine and all show the list alone; inline no page shows; a page whose task 
 
   await pane.press({ key: gotoKey(await pane.drawn(), 'T58') })
   disk.write(EVENTS, [...CHAIN, statusLine('T58', 'etl', NOW - 9 * 24 * HOUR, 'done')])
-  await clock.advance(3_000)
+  await clock.advance(REGISTER_POLL)
   expect(await pane.find({ type: 'Text', text: /^T58 left the pane's tasks: it closed over 8[ \n]days[ \n]ago\.$/ })).toMatchObject({
     children: [{ props: { dimColor: true } }, '\n', { props: { dimColor: true } }],
   })
@@ -2818,7 +2819,7 @@ test("the switch's Inbox button counts the unread lines and opens the Inbox view
 
   // Once the session reads its inbox, the next poll draws the button as the word alone and no line marked.
   disk.write(MARKS, [markLine('po', 4, S1, NOW, '- 2026-10-13 13:00 lead: ship the Inbox view')])
-  await clock.advance(POLL_MS)
+  await clock.advance(REGISTER_POLL)
   expect(keyedProps(await pane.drawn(), 'inbox')).toMatchObject({ label: 'Inbox' })
   expect(await drawsLine(pane, /^3 read in the last 24 hours$/)).toBe(true)
   expect(await drawsLine(pane, /^lead · 13:00 UTC$/)).toBe(true)
@@ -2863,7 +2864,7 @@ test("the switch's Inbox button alone counts the unread lines and opens the view
 
   // Back on the tasks after a poll, the two lines are still unread: the pane writes no mark.
   await pane.press({ key: 'tasks' })
-  await clock.advance(POLL_MS)
+  await clock.advance(REGISTER_POLL)
   expect(keyedProps(await pane.drawn(), 'inbox')).toMatchObject({ label: 'Inbox (2)' })
 })
 
@@ -3608,7 +3609,7 @@ test("an open card ends in the owner's Note and Next: Note sends the typed text 
   // While the field is open the pane draws the register as it stood at the opening: a task added above the card
   // would move the ring off the field (note-hold.ts).
   disk.write(`${TEAMS}/web/state/events.jsonl`, [T1, createLine('T2', { owner: 'po', by: 'lead', at: NOW, priority: 1, title: 'Rotate the key' })])
-  await clock.advance(POLL_MS)
+  await clock.advance(REGISTER_POLL)
   expect(await drawsLine(pane, /T2 +Rotate the key/)).toBe(false)
   await pane.input({ key: 'note:T1:1', text: 'ship it today' })
   expect(ownerRuns()).toEqual(['teamrig owner note T1 --text ship it today'])

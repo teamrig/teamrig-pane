@@ -3,7 +3,7 @@ import type { FoldSnapshot, Snapshot, TaskRow, TaskStatus, TeamLeads } from '../
 import { LABEL_CELLS } from '../hooks/card'
 import { COMMAND, inlineReason, parsePaneArgs, TIE_HINT, USAGE } from '../hooks/command'
 import type { SnapshotSource } from '../hooks/document-source'
-import { LiveRegister, pinKey, type LivePorts, type Timer } from '../hooks/live'
+import { LiveRegister, pinKey, TICK_MS, type LivePorts, type Timer } from '../hooks/live'
 import { EVENT_VERSION, indexMarks, readMarks, readRegister, TASK_STATUSES } from '../hooks/core/read/index'
 import { ANSWER_CONTRACT_MATCHES, DECISION_CONTRACT_MATCHES, FOCUS_CONTRACT_MATCHES, ITEM_TYPE_CONTRACT_MATCHES, rowOf, SPEND_CONTRACT_MATCHES, STATUS_CONTRACT_MATCHES } from '../hooks/log'
 import { cardParts, dockLayout, failedDrawing, inlineLayout, merged, piecesOf, rowParts, wrapRow, type Drawn } from '../hooks/layout'
@@ -1843,45 +1843,62 @@ describe('live', () => {
     expect(snapshot().problem).toBe(null)
   })
 
-  test('starts the poll and the tick, and stop cancels both', async () => {
+  test('starts the label tick alone, and stop cancels it: when the register is read is the refresher’s', async () => {
     const { ports } = livePorts(new MemoryFiles(), [S1])
     const started: number[] = []
     let cancelled = 0
     const live = new LiveRegister(ports)
-    live.startTimers((ms): Timer => {
+    live.startTick((ms): Timer => {
       started.push(ms)
       return { cancel: () => void cancelled++ }
     })
-    expect(started).toEqual([3_000, 60_000])
+    expect(started).toEqual([TICK_MS])
     live.stop()
-    expect(cancelled).toBe(2)
+    expect(cancelled).toBe(1)
   })
 
-  test('the poll reads the session and the register; the tick reads the clock', async () => {
+  test('the tick reads the clock', async () => {
     const { ports } = livePorts(new MemoryFiles(), [S1])
     const asked: string[] = []
     const fired: (() => void)[] = []
-    // Each timer asks its first port before its first await, so what it asked shows at once.
+    // The tick asks its first port before its first await, so what it asked shows at once.
     const live = new LiveRegister({
       ...ports,
-      sessionId: async () => {
-        asked.push('session')
-        return S1
-      },
       now: async () => {
         asked.push('now')
         return NOW
       },
     })
-    live.startTimers((_ms, fn): Timer => {
+    live.startTick((_ms, fn): Timer => {
       fired.push(fn)
       return { cancel: () => undefined }
     })
-    const [poll, tick] = fired
-    poll?.()
-    expect(asked).toEqual(['session'])
-    tick?.()
-    expect(asked).toEqual(['session', 'now'])
+    fired[0]?.()
+    expect(asked).toEqual(['now'])
+  })
+
+  test('a refresh answers whether its poll worked', async () => {
+    const files = new MemoryFiles()
+    const { ports } = livePorts(files, [S1])
+    expect(await new LiveRegister(ports).refresh()).toBe(true)
+    expect(await new LiveRegister({ ...ports, source: { missing: 'no register: set its folders' } }).refresh()).toBe(false)
+    expect(await new LiveRegister({ ...ports, sessionId: () => Promise.reject(new Error('no session')) }).refresh()).toBe(false)
+  })
+
+  test('a refresh while another is under way reads nothing more and answers true', async () => {
+    const { ports } = livePorts(new MemoryFiles(), [S1])
+    let sessions = 0
+    const live = new LiveRegister({
+      ...ports,
+      sessionId: async () => {
+        sessions += 1
+        return S1
+      },
+    })
+    const first = live.refresh()
+    expect(await live.refresh()).toBe(true)
+    expect(await first).toBe(true)
+    expect(sessions).toBe(1)
   })
 
   test('keeps a session’s pin under a store key of its own', () => {

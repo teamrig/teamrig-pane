@@ -1,5 +1,5 @@
 // Keeps the session's snapshot in step with the register's files, at no model-token cost:
-// a stat poll every POLL_MS re-reads only a file whose size or mtime moved, and a TICK_MS
+// each refresh (the refresher's, register-subject.ts) re-reads only a file whose size or mtime moved, and a TICK_MS
 // tick moves the due/age labels on. Each write of the snapshot redraws the pane, so a poll or
 // tick whose snapshot would draw the same pane (view.ts sameView) writes nothing. A per-session pin (/teamrig-pane <area>) is kept in $.store,
 // so a resumed session keeps it.
@@ -7,7 +7,7 @@
 // and no session.start fires, so an id captured once would follow the old session.
 // The engine allows $ only at its call sites in a hook, so session.start hands this class
 // ports built from $ calls rather than $ itself.
-// Neither timer ever rejects: a failed poll or tick shows as the pane's problem over the last good
+// Neither a refresh nor the tick ever rejects: a failed poll or tick shows as the pane's problem over the last good
 // tasks, and when even that write fails the pane stays as last drawn and the next poll tries again.
 import type { Snapshot } from '../types'
 import { SESSION_NAME } from './core/read/index'
@@ -58,10 +58,10 @@ export class LiveRegister {
     this.ports = ports
   }
 
-  /** Starts the poll and the label tick on the engine's clock; neither rejects. */
-  startTimers(every: (ms: number, fn: () => void) => Timer): void {
+  /** Starts the label tick on the engine's clock; it never rejects. When the register is read is the refresher's. */
+  startTick(every: (ms: number, fn: () => void) => Timer): void {
     this.stop()
-    this.timers = [every(POLL_MS, () => void this.refresh()), every(TICK_MS, () => void this.tick())]
+    this.timers = [every(TICK_MS, () => void this.tick())]
   }
 
   /** Moves `now` on, writing only when a due, NEW/NOT PICKED UP or finished label changes with it. */
@@ -81,12 +81,19 @@ export class LiveRegister {
     this.timers = []
   }
 
-  async refresh(): Promise<void> {
-    if (this.isPolling) return
+  /**
+   * Polls the source and draws what changed. Answers whether the poll worked: false with no source or when it threw
+   * (its reason drawn), true when it did or another poll was under way, which reads what this one would.
+   */
+  async refresh(): Promise<boolean> {
+    if (this.isPolling) return true
     this.isPolling = true
     try {
       const source = this.ports.source
-      if ('missing' in source) return await this.showProblem(source.missing)
+      if ('missing' in source) {
+        await this.showProblem(source.missing)
+        return false
+      }
       const session = await this.currentSession()
       const now = await this.ports.now()
       const next = await source.poll({
@@ -97,9 +104,11 @@ export class LiveRegister {
       })
       this.mustPublish = false
       if (next && (this.shown === null || !sameView(this.shown, next))) await this.write(() => next)
+      return true
     } catch (error) {
       this.mustPublish = true
       await this.showProblem(messageOf(error))
+      return false
     } finally {
       this.isPolling = false
     }
