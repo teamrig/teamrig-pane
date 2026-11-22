@@ -16,7 +16,7 @@ import { findPlaces, kitHomeOf, teamIds, teamStateDir, type PlacesInput, type Te
 import type { DocumentName, JsonRecord } from '../hooks/read-document'
 import { LayoutRegister, registerPaths, TaskRegisterSource, type Files, type RegisterDirs } from '../hooks/source'
 import type { CliRun } from '../hooks/teamrig-cli'
-import type { Snapshot, TaskRow, TeamSettings } from '../types'
+import type { FoldSnapshot, Snapshot, TaskRow, TeamSettings } from '../types'
 import { NO_TREE_GOALS } from './fixtures'
 import { askedOf, printed, refused, settingRows, type Asked } from './served-documents'
 import { servedOwnerCards, servedPlan } from './served-plan'
@@ -46,7 +46,7 @@ async function teamOf(disk: FakeDisk, files: TeamFiles, dirs: RegisterDirs, sett
 }
 
 /** The register as the pane's fold reads it now, for `conversation`, or tied to `pinned`. */
-async function foldOf(disk: FakeDisk, team: Team, pinned: string | null, conversation: string | null, now: number): Promise<Snapshot> {
+async function foldOf(disk: FakeDisk, team: Team, pinned: string | null, conversation: string | null, now: number): Promise<FoldSnapshot> {
   const source = new TaskRegisterSource(disk.files, registerPaths(team.dirs), team.settings, team.files, NO_TREE_GOALS)
   const snapshot = await source.poll({ claudeSession: conversation ?? '', pinned, now, force: true })
   if (snapshot === null) throw new Refusal(`team ${team.files.team}'s register cannot be read`)

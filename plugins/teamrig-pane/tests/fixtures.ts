@@ -8,7 +8,7 @@ import { NO_SPEND } from '../hooks/ranking'
 import type { FileStamp, Files, GoalSource } from '../hooks/source'
 import { NO_TASK_COUNTS } from '../hooks/task-counts'
 import { zoneNamed, type Clock } from '../hooks/zone'
-import type { DrawnSettings, GoalRanks, Snapshot, TaskRow, TaskSpend, TeamLeads, TeamSettings, WaitRow } from '../types'
+import type { DrawnSettings, FoldSnapshot, GoalRanks, Snapshot, TaskRow, TaskSpend, TeamLeads, TeamSettings, WaitRow } from '../types'
 import { withPlan } from './served-plan'
 
 export const NOW = Date.UTC(2026, 9, 13, 14, 0)
@@ -26,20 +26,21 @@ export const SNAPSHOT_SETTINGS: DrawnSettings = {
 /** What a team whose config sets none of the pane's settings reads with, on a machine whose zone is UTC. */
 export const TEAM_SETTINGS: TeamSettings = { ...SNAPSHOT_SETTINGS, requireDecisionCard: DEFAULT_REGISTER.requireDecisionCard }
 /**
- * A snapshot's team fields when the pane found no team, on an empty register: no team name, no session name, no leads,
- * no work marks, no goals, no spend read, no cards on the owner, no tasks counted and no plan served.
+ * A fold's team fields when the pane found no team, on an empty register: no team name, no session name, no leads,
+ * no work marks, no goals, no spend read, no tasks counted and no plan served.
  */
-export const NO_TEAM: Pick<Snapshot, 'team' | 'areaName' | 'leads' | 'work' | 'goals' | 'spend' | 'ownerCards' | 'taskCounts' | 'plan'> = {
+export const NO_FOLD_TEAM: Pick<FoldSnapshot, 'team' | 'areaName' | 'leads' | 'work' | 'goals' | 'spend' | 'taskCounts' | 'plan'> = {
   team: null,
   areaName: null,
   leads: null,
   work: [],
   goals: {},
   spend: NO_SPEND,
-  ownerCards: {},
   taskCounts: NO_TASK_COUNTS,
   plan: null,
 }
+/** A snapshot's team fields when the pane found no team: the fold's, and no cards on the owner, as no plan was served. */
+export const NO_TEAM: Pick<Snapshot, keyof typeof NO_FOLD_TEAM | 'ownerCards'> = { ...NO_FOLD_TEAM, ownerCards: {} }
 
 /** A tree that holds no goals and never moves: a source whose test is not about them. */
 export const NO_TREE_GOALS: GoalSource = { refresh: async () => false, current: {} }

@@ -25,7 +25,7 @@ import type { TeamrigCli } from './teamrig-cli'
 import { isActive } from './view'
 import { zoneNamed } from './zone'
 import type { TimeZone } from './core/read/index'
-import type { DrawnSettings, SessionOwnerCards, Snapshot, TaskRow } from '../types'
+import type { DrawnSettings, FoldSnapshot, SessionOwnerCards, Snapshot, TaskRow } from '../types'
 
 /**
  * How long the documents stand unread while no file the pane watches moves: a change the files do not show (a
@@ -132,7 +132,7 @@ export class DocumentSource implements SnapshotSource {
   private readonly plan = new Held(planOf)
   private readonly held: Readonly<Record<DocumentName, { take(document: ReadDocument): void }>>
   /** The file source's last snapshot: a poll of it answers null while nothing it reads moved. */
-  private base: Snapshot | null = null
+  private base: FoldSnapshot | null = null
   /** When the documents were last asked for; null before the first read. */
   private readAt: number | null = null
   /** What the last read's runs could not answer. */
@@ -272,7 +272,7 @@ export class DocumentSource implements SnapshotSource {
     return `teamrig read answers for team ${config.team}, the pane found team ${team}`
   }
 
-  private drawn(base: Snapshot, { pinned, now }: PollInput): Snapshot {
+  private drawn(base: FoldSnapshot, { pinned, now }: PollInput): Snapshot {
     const place = this.placeOf(base.team, pinned)
     const sessions = this.sessions.value
     const inbox = this.inboxOf(place)

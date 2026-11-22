@@ -13,7 +13,7 @@ import { sessionsOf } from '../hooks/sessions-document'
 import { registerPaths, TaskRegisterSource } from '../hooks/source'
 import { tasksOf } from '../hooks/tasks-document'
 import type { CliRun } from '../hooks/teamrig-cli'
-import type { Snapshot } from '../types'
+import type { FoldSnapshot } from '../types'
 import { fakeRead, type FakeDisk } from './fake-read'
 import { HOUR, INBOX_LINES, MemoryFiles, NO_TREE_GOALS, NOW, S1, S2, TEAM_SETTINGS, createLine, iso, markLine, statusLine, waitingLine } from './fixtures'
 import { foldTreeOf } from './fold-tree'
@@ -54,7 +54,7 @@ function diskOf(files: MemoryFiles, cwd: string): FakeDisk {
 }
 
 /** The pane's own fold of the team's files, tied to `pinned`. */
-async function foldOf(files: MemoryFiles, pinned: string | null): Promise<Snapshot> {
+async function foldOf(files: MemoryFiles, pinned: string | null): Promise<FoldSnapshot> {
   const snapshot = await new TaskRegisterSource(files, PATHS, TEAM_SETTINGS, null, NO_TREE_GOALS).poll({ claudeSession: S1, pinned, now: NOW, force: true })
   if (snapshot === null) throw new Error('the fold read nothing')
   return snapshot

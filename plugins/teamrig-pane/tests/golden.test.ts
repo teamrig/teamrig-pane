@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'claude-code/testing'
-import type { Snapshot, TaskRow } from '../types'
+import type { FoldSnapshot, TaskRow } from '../types'
 import { priorityText, readMarks, readRegister, showStored, waitsText } from '../hooks/core/read/index'
 import { rowOf } from '../hooks/log'
 import { rankWords, whenWords } from '../hooks/meta'
@@ -106,7 +106,7 @@ function goldenFiles(changes: Record<string, string> = {}): MemoryFiles {
 }
 
 /** The pane's first snapshot, the register found as the pane finds it: the project's pointer file, then the team config. */
-async function paneSnapshot(files: MemoryFiles): Promise<Snapshot> {
+async function paneSnapshot(files: MemoryFiles): Promise<FoldSnapshot> {
   // The machine's zone is UTC: the team config's, as teamrig read it, must win over it.
   const places = await findPlaces({
     env: { TEAMRIG_HOME: KIT },

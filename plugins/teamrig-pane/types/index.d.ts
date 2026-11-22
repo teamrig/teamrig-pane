@@ -205,9 +205,9 @@ export type Snapshot = {
    */
   spend: TaskSpend
   /**
-   * Each session's cards on the owner, keyed by its id, as the last poll found them (hooks/owner-cards.ts): recounted
-   * when the register moves and, while a card is put off, each minute, so one comes back with no file change. A
-   * session with none is absent.
+   * Each session's cards on the owner, keyed by its id, as teamrig's plan document last served them
+   * (hooks/document-source.ts titledCards): the plan is read again by its `validUntil`, so a card put off comes back
+   * with no file change. A session with none is absent; none at all from a teamrig older than interface 1.5.
    */
   ownerCards: Readonly<Record<string, SessionOwnerCards>>
   /** Each session's tasks counted, as the register last folded (hooks/task-counts.ts): recounted when it moves. */
@@ -221,6 +221,12 @@ export type Snapshot = {
   /** When it was built, so due and age labels move on without a file change. */
   now: number
 }
+
+/**
+ * What the fold of the register's files gives (hooks/source.ts): a snapshot without the cards on the owner, which
+ * only teamrig's plan document serves (hooks/document-source.ts adds them).
+ */
+export type FoldSnapshot = Omit<Snapshot, 'ownerCards'>
 
 /**
  * Each goal's parent, rank and open slice by its tag, what a ranking reads of a goal (core register/ranking.ts `goals`,
