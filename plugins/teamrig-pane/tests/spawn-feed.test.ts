@@ -5,7 +5,7 @@
 import { describe, expect, test } from 'claude-code/testing'
 import type { FeedEnd, FeedFrame } from '../hooks/change-feed'
 import type { ReadAsker } from '../hooks/read-port'
-import { eventsWords, spawnFeed, STDERR_KEPT_CHARS, type SpawnChunk, type SpawnEnd, type SpawnStream } from '../hooks/spawn-feed'
+import { eventsWords, followable, spawnFeed, STDERR_KEPT_CHARS, type SpawnChunk, type SpawnEnd, type SpawnStream } from '../hooks/spawn-feed'
 import type { TeamrigCli } from '../hooks/teamrig-cli'
 
 async function settle(): Promise<void> {
@@ -79,7 +79,7 @@ const FOUND: TeamrigCli = { kind: 'found', main: 'cli/teamrig.js' }
 const ASKER: ReadAsker = { session: 'api', conversation: 'c-1' }
 
 /** A feed whose children are scripted, and what its listener heard, as lines. */
-function rig(cli: TeamrigCli | Error = FOUND) {
+function rig(cli: TeamrigCli | Error = FOUND, asker: ReadAsker = ASKER) {
   const children: ScriptedChild[] = []
   const heard: string[] = []
   const feed = spawnFeed({
@@ -89,7 +89,7 @@ function rig(cli: TeamrigCli | Error = FOUND) {
       return child.stream
     },
     cli: () => (cli instanceof Error ? Promise.reject(cli) : Promise.resolve(cli)),
-    asker: () => ASKER,
+    asker: () => asker,
   })
   const listener = {
     onFrame: (frame: FeedFrame) => heard.push(`${frame.event} ${frame.documents.map(mark => `${mark.document}@${mark.revision ?? '-'}`).join(',')}`),
@@ -109,7 +109,24 @@ describe('eventsWords', () => {
   })
 })
 
+describe('followable', () => {
+  test('leaves the inbox out when no session is named, as teamrig refuses a stream asking for it then', () => {
+    expect(followable(['tasks', 'inbox'], ASKER)).toEqual(['tasks', 'inbox'])
+    expect(followable(['tasks', 'inbox'], { session: null, conversation: 'c-1' })).toEqual(['tasks'])
+  })
+})
+
 describe('spawnFeed', () => {
+  test('with no session asked as, follows the documents but the inbox; with only the inbox, starts nothing', async () => {
+    const some = rig(FOUND, { session: null, conversation: 'c-1' })
+    some.follow(['tasks', 'inbox'])
+    const none = rig(FOUND, { session: null, conversation: 'c-1' })
+    none.follow(['inbox'])
+    await settle()
+    expect(some.children.map(child => child.argv)).toEqual([['node', 'cli/teamrig.js', 'events', '--json', '--documents', 'tasks', '--conversation', 'c-1']])
+    expect([none.children.length, none.heard]).toEqual([0, ['end unavailable']])
+  })
+
   test('starts the CLI following the documents, and reads frames from pieces cut anywhere', async () => {
     const { children, heard, follow } = rig()
     follow(['tasks', 'inbox'])
