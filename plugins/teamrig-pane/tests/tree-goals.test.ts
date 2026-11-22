@@ -1,9 +1,8 @@
 import { describe, expect, test } from 'claude-code/testing'
-import type { Snapshot } from '../types'
 import type { TeamFiles } from '../hooks/places'
 import { TaskRegisterSource, type RegisterPaths } from '../hooks/source'
 import { TreeGoals } from '../hooks/tree-goals'
-import { HOUR, MemoryFiles, NOW, S1, TEAM_SETTINGS, createLine, goalLine, goalRankLine, goalSliceLine, goalTitleLine, waitingLine, type CardFields } from './fixtures'
+import { HOUR, MemoryFiles, NOW, S1, TEAM_SETTINGS, createLine, goalLine, goalRankLine, goalSliceLine, goalTitleLine } from './fixtures'
 
 const PATHS: RegisterPaths = { events: 'R/tasks/events.jsonl', marks: 'R/tasks/inbox-marks.jsonl', goals: 'R/tasks/goals.jsonl', inboxDir: 'R/inbox', tasksWeek: 'R/tasks/usage/tasks.week.json' }
 const WEB: TeamFiles = { team: 'web', dir: 'K/teams/web', teamsDir: 'K/teams', config: 'K/teams/web/config.json', renames: 'R/tasks/renames.jsonl', turnLog: null }
@@ -157,41 +156,18 @@ describe('TreeGoals', () => {
 })
 
 describe('TaskRegisterSource over the tree goals', () => {
-  const GATED: CardFields = { question: 'Ship it?', options: ['A: now', 'B: next week'], recommend: 'A', byDefault: 'B', gate: 'product' }
   const POLL = { claudeSession: S1, pinned: 'etl', now: NOW }
 
-  /** A Roadmap task on `goal`, waiting on the owner's decision. */
-  const onGoal = (id: string, goal: string) => [
-    createLine(id, { owner: 'po', by: 'lead', at: NOW - 3 * HOUR, goals: [goal], taskKeys: { workClass: 'Roadmap' } }),
-    waitingLine(id, 'po', NOW - 2 * HOUR, [{ kind: 'decision', who: 'owner' }], null, GATED),
-  ]
-
-  const dueIds = (snap: Snapshot | null) => snap?.ownerCards['po']?.due.map(card => card.id)
-
-  test('a goal rank moving alone gives a snapshot, its goals and the owner cards in their new order', async () => {
-    const files = new MemoryFiles()
-    files.write(PATHS.events, [...onGoal('T1', 'A1'), ...onGoal('T2', 'A2')].join('\n'))
-    files.write(PATHS.goals, goalsText({ A1: 1, A2: 2 }))
-    const source = new TaskRegisterSource(files, PATHS, TEAM_SETTINGS, null, new TreeGoals(files, PATHS.goals, null))
-    expect(dueIds(await source.poll(POLL))).toEqual(['T1', 'T2'])
-    expect(await source.poll(POLL)).toBe(null)
-    files.write(PATHS.goals, goalsText({ A1: 2, A2: 1 }))
-    const moved = await source.poll(POLL)
-    expect(moved?.goals).toEqual({ A1: { parent: null, rank: 2, slice: null }, A2: { parent: null, rank: 1, slice: null } })
-    expect(dueIds(moved)).toEqual(['T2', 'T1'])
-  })
-
-  // The usual case: a rank moves the rows' scores with no owner card to reorder, so nothing else asks for a snapshot.
-  test('a goal rank moving with no owner card to reorder still gives a snapshot', async () => {
+  // A rank moves the rows' scores with no register event, so the goals' file alone asks for a snapshot.
+  test('a goal rank moving alone gives a snapshot with its goals', async () => {
     const files = new MemoryFiles()
     files.write(PATHS.events, createLine('T1', { owner: 'api', by: 'lead', at: NOW - 3 * HOUR, goals: ['A1'], taskKeys: { workClass: 'Roadmap' } }))
     files.write(PATHS.goals, goalsText({ A1: 1 }))
     const source = new TaskRegisterSource(files, PATHS, TEAM_SETTINGS, null, new TreeGoals(files, PATHS.goals, null))
-    expect(dueIds(await source.poll(POLL)) ?? []).toEqual([])
+    expect(await source.poll(POLL)).not.toBe(null)
     expect(await source.poll(POLL)).toBe(null)
     files.write(PATHS.goals, goalsText({ A1: 2 }))
     const moved = await source.poll(POLL)
     expect(moved?.goals).toEqual({ A1: { parent: null, rank: 2, slice: null } })
-    expect(dueIds(moved) ?? []).toEqual([])
   })
 })

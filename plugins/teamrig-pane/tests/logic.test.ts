@@ -1,7 +1,8 @@
 import { describe, expect, test } from 'claude-code/testing'
-import type { Snapshot, TaskRow, TaskStatus, TeamLeads } from '../types'
+import type { FoldSnapshot, Snapshot, TaskRow, TaskStatus, TeamLeads } from '../types'
 import { LABEL_CELLS } from '../hooks/card'
 import { COMMAND, inlineReason, parsePaneArgs, TIE_HINT, USAGE } from '../hooks/command'
+import type { SnapshotSource } from '../hooks/document-source'
 import { LiveRegister, pinKey, type LivePorts, type Timer } from '../hooks/live'
 import { EVENT_VERSION, indexMarks, readMarks, readRegister, TASK_STATUSES } from '../hooks/core/read/index'
 import { ANSWER_CONTRACT_MATCHES, DECISION_CONTRACT_MATCHES, FOCUS_CONTRACT_MATCHES, ITEM_TYPE_CONTRACT_MATCHES, rowOf, SPEND_CONTRACT_MATCHES, STATUS_CONTRACT_MATCHES } from '../hooks/log'
@@ -16,7 +17,7 @@ import { MAX_READ_BYTES, TaskRegisterSource, registerPaths, skippedText, unlessM
 import { areaView, MAX_FINISHED, ownerGroups, sameView } from '../hooks/view'
 import { HELD_DAYS } from '../hooks/done'
 import type { TeamFiles } from '../hooks/places'
-import { HOUR, LIKE_MEDIANS, MemoryFiles, NOT_PICKED_UP_HOURS, NOW, NO_TEAM, NO_TREE_GOALS, S1, S2, S3, SNAPSHOT_SETTINGS, TEAM_SETTINGS, approveLine, bigRegister, clockAt, createLine, decideLine, iso, markLine, statusLine, tasksWeekText, treeAt, updateLine, waitingLine, verifyingLine } from './fixtures'
+import { HOUR, LIKE_MEDIANS, MemoryFiles, NOT_PICKED_UP_HOURS, NOW, NO_FOLD_TEAM, NO_TEAM, NO_TREE_GOALS, S1, S2, S3, SNAPSHOT_SETTINGS, TEAM_SETTINGS, approveLine, bigRegister, clockAt, createLine, decideLine, iso, markLine, statusLine, tasksWeekText, treeAt, updateLine, waitingLine, verifyingLine } from './fixtures'
 import { foldTreeOf } from './fold-tree'
 import { planReadOf, withPlan } from './served-plan'
 
@@ -1546,7 +1547,8 @@ describe('source', () => {
   test('a pin wins over the inbox read, and missing files read as an empty register with no unread count', async () => {
     const source = new TaskRegisterSource(new MemoryFiles(), PATHS, TEAM_SETTINGS, null, NO_TREE_GOALS)
     const snap = await source.poll({ claudeSession: S1, pinned: 'etl', now: NOW })
-    expect(snap).toEqual({ tasks: [], area: 'etl', areaSource: 'pinned', unreadInbox: null, inbox: [], problem: null, ...NO_TEAM, ...SNAPSHOT_SETTINGS, now: NOW })
+    const fold: FoldSnapshot = { tasks: [], area: 'etl', areaSource: 'pinned', unreadInbox: null, inbox: [], problem: null, ...NO_FOLD_TEAM, ...SNAPSHOT_SETTINGS, now: NOW }
+    expect(snap).toEqual(fold)
   })
 
   test("a snapshot carries what its own tasks spent from the team's tasks' week file, and every median", async () => {
@@ -1609,51 +1611,17 @@ describe('source', () => {
   test("each snapshot carries the team config's settings the source was made with: its NOT PICKED UP hours, zone and owner marker", async () => {
     const drawn = { notPickedUpAfterHours: 48, timeZone: 'Asia/Jerusalem', ownerSource: 'boss' }
     const source = new TaskRegisterSource(new MemoryFiles(), PATHS, { ...TEAM_SETTINGS, ...drawn }, null, NO_TREE_GOALS)
-    const settingsOf = (snap: Snapshot | null) =>
+    const settingsOf = (snap: FoldSnapshot | null) =>
       snap === null ? null : { notPickedUpAfterHours: snap.notPickedUpAfterHours, timeZone: snap.timeZone, ownerSource: snap.ownerSource }
     expect(settingsOf(await source.poll({ claudeSession: S1, pinned: 'etl', now: NOW }))).toEqual(drawn)
     expect(settingsOf(await source.poll({ claudeSession: S1, pinned: 'etl', now: NOW + HOUR, force: true }))).toEqual(drawn)
-  })
-
-  /** po's T1, waiting on the owner's decision; put off to `until` when given, as the owner's Later writes it. */
-  const ownerWait = (until: string | null): string[] => [
-    createLine('T1', { owner: 'po', by: 'lead', at: NOW - 2 * HOUR, title: 'Ship the tab?' }),
-    waitingLine('T1', 'po', NOW - HOUR, [{ kind: 'decision', who: 'owner' }, ...(until === null ? [] : [{ kind: 'time' as const, at: until }])], null, {
-      question: 'Ship the tab?',
-      options: ['A: now', 'B: later'],
-      recommend: 'A',
-      byDefault: 'B',
-      gate: 'product',
-    }),
-  ]
-
-  test("each snapshot carries each session's cards on the owner, by the team config's owner marker", async () => {
-    const files = new MemoryFiles()
-    files.write(PATHS.events, ownerWait(null).join('\n'))
-    const snap = await new TaskRegisterSource(files, PATHS, TEAM_SETTINGS, null, NO_TREE_GOALS).poll({ claudeSession: S1, pinned: 'etl', now: NOW })
-    expect(snap?.ownerCards).toEqual({ po: { due: [{ id: 'T1', title: 'Ship the tab?' }], later: [] } })
-    const bossed = await new TaskRegisterSource(files, PATHS, { ...TEAM_SETTINGS, ownerSource: 'boss' }, null, NO_TREE_GOALS).poll({ claudeSession: S1, pinned: 'etl', now: NOW })
-    expect(bossed?.ownerCards).toEqual({})
-  })
-
-  test('a card put off comes back once its time passes, with no file change; with none put off a later poll stays null', async () => {
-    const files = new MemoryFiles()
-    files.write(PATHS.events, ownerWait('2026-10-13 15:00').join('\n'))
-    const source = new TaskRegisterSource(files, PATHS, TEAM_SETTINGS, null, NO_TREE_GOALS)
-    const first = await source.poll({ claudeSession: S1, pinned: 'etl', now: NOW })
-    expect(first?.ownerCards).toEqual({ po: { due: [], later: [{ id: 'T1', title: 'Ship the tab?', until: '10-13 15:00 UTC' }] } })
-    expect(await source.poll({ claudeSession: S1, pinned: 'etl', now: NOW + 30 * 60_000 })).toBe(null)
-    const back = await source.poll({ claudeSession: S1, pinned: 'etl', now: NOW + HOUR })
-    expect(back?.ownerCards).toEqual({ po: { due: [{ id: 'T1', title: 'Ship the tab?' }], later: [] } })
-    // Nothing put off any more: the minutes pass with no recount.
-    expect(await source.poll({ claudeSession: S1, pinned: 'etl', now: NOW + 2 * HOUR })).toBe(null)
   })
 
   /** Team web, whose config calls api web-backend and gives ui the team's default name. */
   const WEB: TeamFiles = { team: 'web', dir: 'K/teams/web', teamsDir: 'K/teams', config: 'K/teams/web/config.json', renames: 'R/tasks/renames.jsonl', turnLog: null }
   const WEB_TEAM = { sessions: ['lead', 'api', 'ui'], roles: { lead: 'lead' }, names: { api: 'web-backend' } }
   const WEB_CONFIG = JSON.stringify(WEB_TEAM)
-  const namesOf = (snap: Snapshot | null) => (snap === null ? null : { team: snap.team, areaName: snap.areaName })
+  const namesOf = (snap: FoldSnapshot | null) => (snap === null ? null : { team: snap.team, areaName: snap.areaName })
 
   test("names the area as teamrig's commands do, from the team's config and rename log, a rename on the next poll", async () => {
     const files = new MemoryFiles()
@@ -1708,6 +1676,16 @@ describe('source', () => {
 })
 
 
+/** The fold as the live loop's source, with no teamrig to serve a plan: so no owner's cards. */
+function servingNoCards(fold: TaskRegisterSource): SnapshotSource {
+  return {
+    poll: async input => {
+      const snapshot = await fold.poll(input)
+      return snapshot === null ? null : { ...snapshot, ownerCards: {} }
+    },
+  }
+}
+
 /** Ports over a MemoryFiles register, recording what the class publishes and pins; `clock.now` moves its time. */
 function livePorts(files: MemoryFiles, ids: string[]) {
   let current: Snapshot = { tasks: [], area: null, areaSource: null, unreadInbox: null, inbox: [], problem: null, ...NO_TEAM, ...SNAPSHOT_SETTINGS, now: 0 }
@@ -1715,7 +1693,7 @@ function livePorts(files: MemoryFiles, ids: string[]) {
   const clock = { now: NOW }
   const pins = new Map<string, string>()
   const ports: LivePorts = {
-    source: new TaskRegisterSource(files, PATHS, TEAM_SETTINGS, null, NO_TREE_GOALS),
+    source: servingNoCards(new TaskRegisterSource(files, PATHS, TEAM_SETTINGS, null, NO_TREE_GOALS)),
     sessionId: async () => ids[0] ?? 'none',
     now: async () => clock.now,
     publish: async change => {

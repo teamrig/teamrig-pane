@@ -11,7 +11,8 @@ import { planOf, type PlanRead } from '../hooks/plan-document'
 import { rankingOf } from '../hooks/ranking'
 import { parseDocument, type JsonRecord } from '../hooks/read-document'
 import { zoneNamed } from '../hooks/zone'
-import type { TaskRow } from '../types'
+import { titledCards } from '../hooks/document-source'
+import type { Snapshot, TaskRow } from '../types'
 import { foldTreeOf, type FoldSource } from './fold-tree'
 
 /** The settings whose days turn an answer of the plan with no file moving (`focus.score.dueSoonDays`, `focus.parkAfterDays`). */
@@ -138,7 +139,8 @@ export function planReadOf(fold: FoldSource): PlanRead {
   return plan.value
 }
 
-/** The fold as a snapshot holds it once teamrig served its plan. */
-export function withPlan<S extends FoldSource>(fold: S): S & { readonly plan: PlanRead } {
-  return { ...fold, plan: planReadOf(fold) }
+/** The fold as a snapshot holds it once teamrig served its plan: the plan, and the owner's cards titled from it. */
+export function withPlan<S extends FoldSource>(fold: S): S & { readonly plan: PlanRead; readonly ownerCards: Snapshot['ownerCards'] } {
+  const plan = planReadOf(fold)
+  return { ...fold, plan, ownerCards: titledCards(plan.ownerCards, fold.tasks, zoneNamed(fold.timeZone)) }
 }

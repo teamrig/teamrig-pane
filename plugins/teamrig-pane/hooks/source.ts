@@ -3,7 +3,7 @@
 // and the register put together by teamrig's own read entry (hooks/core/read), so the pane shows what
 // teamrig's commands show, on a register never rotated and on a rotated one alike.
 // File access goes through `Files`, which register.tsx backs with $.fs and tests with a fake.
-import type { AreaSource, DrawnSettings, GoalRanks, OwnerSettings, SessionOwnerCards, Snapshot, TaskCounts, TaskRow, TaskSpend, TeamLeads, TeamSettings, WorkMark } from '../types'
+import type { AreaSource, DrawnSettings, FoldSnapshot, GoalRanks, TaskCounts, TaskRow, TaskSpend, TeamLeads, TeamSettings, WorkMark } from '../types'
 import {
   assemble,
   GOALS_FILE,
@@ -29,22 +29,18 @@ import {
   type RegisterSnapshot,
   type Rename,
   type SnapshotRead,
-  type TimeZone,
 } from './core/read/index'
 import { lineHash } from './line-hash'
 import { isHeldFinished } from './done'
 import { inboxItems } from './inbox'
 import { teamLeads } from './leads'
 import { rowOf } from './log'
-import { ownerCardsOf } from './owner-cards'
 import type { TeamFiles } from './places'
 import { NO_SPEND, spendFor, spendIn } from './ranking'
 import { NO_TASK_COUNTS, taskCountsOf } from './task-counts'
 import { isActive } from './view'
 import { workMarks } from './work'
-import { zoneNamed } from './zone'
 
-const MINUTE_MS = 60_000
 const HOUR_MS = 3_600_000
 
 export type FileStamp = { mtimeMs: number; size: number }
@@ -286,7 +282,7 @@ export type PollInput = { claudeSession: string; pinned: string | null; now: num
 
 /** What a poll of the files found. */
 export type FilePoll = {
-  readonly snapshot: Snapshot
+  readonly snapshot: FoldSnapshot
   /**
    * True when a file teamrig builds a served document from moved (the register, the config or the rename log, the
    * area's inbox, the read marks, and for the plan the goals' ranks) or the area changed. A move in another team's
@@ -318,31 +314,22 @@ export class TaskRegisterSource {
   private readonly paths: RegisterPaths
   /** The team config's settings each snapshot carries (places.ts teamSettings), read once when the session starts. */
   private readonly drawn: DrawnSettings
-  /** The team config's settings that decide which waits are the owner's, read with the others. */
-  private readonly owner: OwnerSettings
-  /** The team's zone, the day a card is put off to ends in. */
-  private readonly zone: TimeZone
-  /** Each session's cards on the owner, as last counted (owner-cards.ts). */
-  private ownerCards: Record<string, SessionOwnerCards> = {}
-  /** The minute they were last counted at: while a card is put off, a new minute counts them again. */
-  private ownerCardsMinute = -1
   /** The team's session names, for the area's name; null when the pane found no team. */
   private readonly names: TeamNames | null
   /** The hours the team keeps its turn log, the work marks' window; null with no team or no team config, which have none. */
   private readonly keepHours: number | null
-  /** The goals of the tree, which a task's score and the owner's cards' order read. */
+  /** The goals of the tree, which a task's score reads. */
   private readonly goals: GoalSource
-  /** What the team's tasks cost this week, which a task's size, and so its score and the owner's cards' order, read. */
+  /** What the team's tasks cost this week, which a task's size, and so its score, reads. */
   private readonly spend: WatchedFile<TaskSpend>
 
   constructor(files: Files, paths: RegisterPaths, settings: TeamSettings, team: TeamFiles | null, goals: GoalSource) {
     this.files = files
     this.paths = paths
     this.goals = goals
-    const { requireDecisionCard, ...drawn } = settings
+    // Which waits are the owner's is teamrig's to judge: the plan document serves the cards (document-source.ts).
+    const { requireDecisionCard: _judgedByTeamrig, ...drawn } = settings
     this.drawn = drawn
-    this.owner = { ownerSource: settings.ownerSource, requireDecisionCard, focus: settings.focus }
-    this.zone = zoneNamed(settings.timeZone)
     this.register = new LayoutRegister(files, paths.events)
     this.marks = new WatchedFile(files, paths.marks, readMarks, readMarks(''))
     this.spend = new WatchedFile(files, paths.tasksWeek, spendIn, NO_SPEND)
@@ -351,7 +338,7 @@ export class TaskRegisterSource {
   }
 
   /** A new snapshot when anything it draws from changed since the last poll (or `force`), else null. */
-  async poll(input: PollInput): Promise<Snapshot | null> {
+  async poll(input: PollInput): Promise<FoldSnapshot | null> {
     return (await this.pollFiles(input))?.snapshot ?? null
   }
 
@@ -371,10 +358,8 @@ export class TaskRegisterSource {
       this.work = this.keepHours === null ? [] : workMarks(events, now - this.keepHours * HOUR_MS, atWindowStart)
       this.taskCounts = taskCountsOf(this.register.current.state.tasks.values(), this.register.current.retired !== null)
     }
-    // Before the cards: a moved rank or spend reorders them with no register event.
     const goalsChanged = await this.goals.refresh()
     const spendChanged = await this.spend.refresh()
-    const ownerChanged = this.refreshOwnerCards(registerChanged || goalsChanged || spendChanged, now)
     const marksChanged = await this.marks.refresh()
     const { byArea, areaBySession } = indexMarks(this.marks.current.marks)
     const inboxArea = areaBySession.get(claudeSession) ?? null
@@ -385,7 +370,7 @@ export class TaskRegisterSource {
     this.lastArea = area
     const inboxChanged = this.inbox ? await this.inbox.refresh() : false
     const namesChanged = this.names ? await this.names.refresh() : false
-    if (!force && !registerChanged && !goalsChanged && !spendChanged && !ownerChanged && !marksChanged && !areaChanged && !inboxChanged && !namesChanged) return null
+    if (!force && !registerChanged && !goalsChanged && !spendChanged && !marksChanged && !areaChanged && !inboxChanged && !namesChanged) return null
 
     // An area that never ran `inbox read` has no mark: its count is unknown, not everything.
     const mark = area === null ? undefined : byArea.get(area)
@@ -394,7 +379,7 @@ export class TaskRegisterSource {
     // A task of another team's register moving is no signal here: the pane reads none of them (T4759), and the plan
     // that holds such a move is asked for again within the document read's own 60 s.
     const isServedMoved = registerChanged || goalsChanged || marksChanged || areaChanged || inboxChanged || namesChanged
-    const snapshot: Snapshot = {
+    const snapshot: FoldSnapshot = {
       tasks: this.tasks,
       area,
       areaSource,
@@ -408,26 +393,10 @@ export class TaskRegisterSource {
       ...this.drawn,
       goals: this.goals.current,
       spend: spendFor(this.spend.current, this.tasks.map(task => task.id)),
-      ownerCards: this.ownerCards,
       taskCounts: this.taskCounts,
       plan: null,
       now,
     }
     return { snapshot, isServedMoved }
-  }
-
-  /**
-   * Counts the cards on the owner again when the register or the goals moved, or when a card is put off and a minute
-   * passed (its time may have come); true when they changed.
-   */
-  private refreshOwnerCards(ranksMoved: boolean, now: number): boolean {
-    const minute = Math.floor(now / MINUTE_MS)
-    const putOff = Object.values(this.ownerCards).some(cards => cards.later.length > 0)
-    if (!ranksMoved && !(putOff && minute !== this.ownerCardsMinute)) return false
-    this.ownerCardsMinute = minute
-    const cards = ownerCardsOf(this.register.current.state.tasks, now, this.zone, this.owner, this.goals.current, this.spend.current)
-    if (JSON.stringify(cards) === JSON.stringify(this.ownerCards)) return false
-    this.ownerCards = cards
-    return true
   }
 }
