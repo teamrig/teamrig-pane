@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.80.0](https://github.com/teamrig/teamrig-pane/compare/teamrig-pane-v0.79.0...teamrig-pane-v0.80.0) (2026-11-22)
+
+
+### Features
+
+* **ui:** the dedicated UI reads its team's register through teamrig read (T4761) ([74dc75d](https://github.com/teamrig/teamrig-pane/commit/74dc75d978cfdc502351fc8d2d1cf75999199472))
+
+
+### Bug Fixes
+
+* **ui:** every writer of the UI's store redraws it (T4761) ([b38d17a](https://github.com/teamrig/teamrig-pane/commit/b38d17ab65ae3f71593bba8e07617a588057a8d5))
+
 ## [0.79.0](https://github.com/teamrig/teamrig-pane/compare/teamrig-pane-v0.78.0...teamrig-pane-v0.79.0) (2026-11-22)
 
 
