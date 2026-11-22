@@ -4,14 +4,15 @@
 // to the store, which draws it. teamrig starts the UI as `node <entry> --team <team> [--session <id>]` with its CLI's
 // script and its Node.js in the environment (teamrig's src/ui/start.ts), so the UI calls back the teamrig that
 // started it. It is not a Claude Code conversation: the area it draws is the `--session` named, else the
-// environment's TEAMRIG_SESSION, else the one teamrig finds for the asker. Runs the CLI and reads files only.
+// environment's TEAMRIG_SESSION, else the session the person last typed in (last-typed.ts, T5101), else the one
+// teamrig finds for the asker. Runs the CLI and reads files only.
 import { SESSION_NAME } from '../hooks/core/read/index'
 import { TaskDetails, type RefPlaces } from '../hooks/details'
 import { DocumentSource } from '../hooks/document-source'
 import { messageOf } from '../hooks/errors'
-import { LiveRegister, type LivePorts, type Timer } from '../hooks/live'
+import { LiveRegister, POLL_MS, type LivePorts, type Timer } from '../hooks/live'
 import type { PaneStore } from '../hooks/pane-store'
-import { findPlaces, TEAMRIG_ENV, type Places, type PlacesEnv } from '../hooks/places'
+import { findPlaces, kitHomeOf, TEAMRIG_ENV, type Places, type PlacesEnv } from '../hooks/places'
 import type { ReadsFile } from '../hooks/presses'
 import { RefFileReader } from '../hooks/ref-file'
 import { registerPaths, TaskRegisterSource, type Files } from '../hooks/source'
@@ -20,6 +21,7 @@ import { TreeGoals } from '../hooks/tree-goals'
 import type { TaskDetail, TaskRow } from '../types'
 import { withActs } from './acts-front'
 import type { Focus, Front } from './app'
+import { readLastTyped, type LastTyped } from './last-typed'
 import { NO_TEAM_FRONT } from './program'
 import type { RunInit } from './processes'
 
@@ -109,13 +111,13 @@ export function withTeam(argv: readonly string[], main: string | null, team: str
   return team !== null && main !== null && argv[0] === 'node' && argv[1] === main ? [...argv, '--team', team] : argv
 }
 
-/** The places teamrig's variables name, the command line's team over the environment's. */
-function placesEnv(deps: Pick<TeamFrontDeps, 'args' | 'env'>): PlacesEnv {
+/** The places teamrig's variables name, `team` (the command line's, or the one followed to) over the environment's. */
+function placesEnv(deps: Pick<TeamFrontDeps, 'env'>, team: string | null): PlacesEnv {
   return {
     TEAMRIG_PANE_GOALS_DOC: deps.env('TEAMRIG_PANE_GOALS_DOC'),
     TEAMRIG_PANE_SETTINGS: deps.env('TEAMRIG_PANE_SETTINGS'),
     [TEAMRIG_ENV.home]: deps.env(TEAMRIG_ENV.home),
-    [TEAMRIG_ENV.team]: deps.args.team ?? deps.env(TEAMRIG_ENV.team),
+    [TEAMRIG_ENV.team]: team ?? deps.env(TEAMRIG_ENV.team),
   }
 }
 
@@ -125,12 +127,26 @@ export const NO_TEAM_PROBLEM = `no team here: run teamrig ui in a teamrig team's
 /**
  * The team as the UI reads it: made at once, so the program draws while it starts, and serving the team's front from
  * the first read on. Its start never rejects: what it cannot find or read is the pane's problem line.
+ *
+ * Started with no session named (no `--session`, no TEAMRIG_SESSION), it follows the person (T5101): it draws the
+ * session they last typed in when that is in its team, and on each POLL_MS reads the last-typed record again (one small
+ * file, last-typed.ts): a new prompt in another session of its team moves the pin there, one in another team rebinds
+ * the UI to that team. A record already there at the start that names another team is left alone: the team the UI
+ * was started for comes first until the person types somewhere. A session named stays pinned and nothing is followed.
  */
 export class TeamFront {
   readonly #deps: TeamFrontDeps
   #live: LiveRegister | null = null
   #front: ((focus: Focus) => Front) | null = null
   #isStopped = false
+  /** The team bound, null when none is found; what a record is compared with. */
+  #teamId: string | null = null
+  /** The session drawn, null when teamrig finds it. */
+  #pinned: string | null = null
+  /** The `at` of the last record followed or seen at the start: an equal one is no new prompt. */
+  #seenAt: string | null = null
+  #followTimer: Timer | null = null
+  #isFollowing = false
 
   constructor(deps: TeamFrontDeps) {
     this.#deps = deps
@@ -144,7 +160,12 @@ export class TeamFront {
   /** Finds the team, reads it once and keeps it read; a stop before it is done leaves no timer running. */
   async start(): Promise<void> {
     try {
-      await this.#bind()
+      const deps = this.#deps
+      const follows = deps.args.session === null && deps.env(SESSION_ENV) === undefined
+      const record = follows ? await this.#lastTyped() : null
+      this.#seenAt = record?.at ?? null
+      await this.#bind(deps.args.team, record)
+      if (follows && !this.#isStopped) this.#followTimer = deps.every(POLL_MS, () => void this.#follow())
     } catch (error) {
       await this.#showProblem(messageOf(error)).catch(() => undefined)
     }
@@ -154,19 +175,52 @@ export class TeamFront {
   stop(): void {
     this.#isStopped = true
     this.#live?.stop()
+    this.#followTimer?.cancel()
+    this.#followTimer = null
   }
 
-  async #bind(): Promise<void> {
+  /** Reads the last-typed record and moves to a new one's session; never rejects, and never runs twice at once. */
+  async #follow(): Promise<void> {
+    if (this.#isFollowing || this.#isStopped) return
+    this.#isFollowing = true
+    try {
+      const record = await this.#lastTyped()
+      if (record === null || record.at === this.#seenAt || this.#isStopped) return
+      this.#seenAt = record.at
+      if (record.team !== this.#teamId) {
+        this.#live?.stop()
+        await this.#bind(record.team, record)
+      } else if (record.session !== this.#pinned) {
+        this.#pinned = record.session
+        await this.#live?.pin(record.session)
+      }
+    } catch (error) {
+      await this.#showProblem(messageOf(error)).catch(() => undefined)
+    } finally {
+      this.#isFollowing = false
+    }
+  }
+
+  #lastTyped(): Promise<LastTyped | null> {
+    const deps = this.#deps
+    return readLastTyped(deps.files, kitHomeOf(placesEnv(deps, null), deps.home))
+  }
+
+  /** Binds the UI to `team` (null: the one the environment or the folder names), drawing `record`'s session when it is that team's. */
+  async #bind(team: string | null, record: LastTyped | null): Promise<void> {
     const deps = this.#deps
     const cli = await uiCli(deps)
-    const places = await findPlaces({ env: placesEnv(deps), files: deps.files, home: deps.home, cwd: deps.cwd, machineZone: deps.machineZone })
+    const places = await findPlaces({ env: placesEnv(deps, team), files: deps.files, home: deps.home, cwd: deps.cwd, machineZone: deps.machineZone })
     if (this.#isStopped) return
     const main = cli.kind === 'found' ? cli.main : null
     const teamId = places.kind === 'found' ? places.team.team : null
     const run = (argv: readonly string[], timeoutMs: number): Promise<CliRun> =>
       deps.run(withNode(withTeam(argv, main, teamId), deps.env(UI_ENV.node)), { cwd: deps.cwd, timeoutMs })
-    const session = deps.args.session ?? deps.env(SESSION_ENV) ?? null
-    // The pin is the session asked for, kept for this run alone: the UI has no `/teamrig-pane <area>` to change it.
+    const typed = record !== null && record.team === teamId ? record.session : null
+    const session = deps.args.session ?? deps.env(SESSION_ENV) ?? typed
+    this.#teamId = teamId
+    this.#pinned = session
+    // The pin is the session asked for or followed to, kept for this run alone: the UI has no `/teamrig-pane <area>`.
     let pinned: string | null = session
     const live = new LiveRegister({
       source: sourceOf(places, cli, run, deps),
