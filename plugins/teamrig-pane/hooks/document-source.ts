@@ -8,7 +8,7 @@
 // document is read the list is empty under the reason, never the fold's rows. A failed run, or a document that
 // cannot be read, keeps what was last drawn and names why. Runs the CLI only; no model calls.
 import { configOf, type SettingsRead } from './config-document'
-import type { BodyRead } from './document-fields'
+import { Held } from './held-document'
 import { isHeldFinished } from './done'
 import { inboxShown } from './inbox'
 import { inboxOf, type InboxRead } from './inbox-document'
@@ -39,48 +39,6 @@ export type SnapshotSource = { poll(input: PollInput): Promise<Snapshot | null> 
 
 /** The fold of the team's files beneath the documents: each poll says whether what moved feeds a served document. */
 export type FileSource = { pollFiles(input: PollInput): Promise<FilePoll | null> }
-
-/** One document as the source holds it between reads. */
-class Held<T> {
-  /** The last value read; null until one is. */
-  value: T | null = null
-  /** The revision of `value`, handed back so teamrig answers `unchanged` for it; null with none held. */
-  revision: string | null = null
-  /** What teamrig and the reader could not serve of `value`. */
-  private problems: readonly string[] = []
-  /** Why the newest answer could not be read; null when it was, or said nothing changed. */
-  trouble: string | null = null
-  private readonly reader: (document: ReadDocument) => BodyRead<T>
-
-  constructor(reader: (document: ReadDocument) => BodyRead<T>) {
-    this.reader = reader
-  }
-
-  /**
-   * Takes a run's answer. One that cannot be read keeps the value last drawn and its revision, so the next run reads
-   * the document whole again and the reason stays until it can be read.
-   */
-  take(document: ReadDocument): void {
-    if (document.isUnchanged) {
-      this.trouble = null
-      return
-    }
-    const read = this.reader(document)
-    if (read.kind === 'unreadable') {
-      this.trouble = read.reason
-      return
-    }
-    this.value = read.value
-    this.revision = document.revision
-    this.problems = [...document.problems, ...read.problems]
-    this.trouble = null
-  }
-
-  /** The lines to show for this document. */
-  get lines(): readonly string[] {
-    return this.trouble === null ? this.problems : [...this.problems, this.trouble]
-  }
-}
 
 /** The documents this source polls; `stats` is the Stats tab's own, asked only while the tab is open. */
 type PolledName = Exclude<DocumentName, 'stats'>
