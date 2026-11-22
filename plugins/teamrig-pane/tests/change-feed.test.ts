@@ -3,7 +3,7 @@
 // line that is no frame is told as a reason, once; and a stream cut anywhere, even inside a line ending, comes out as
 // whole lines, one too long to be a frame dropped unread (T4760).
 import { describe, expect, test } from 'claude-code/testing'
-import { LineSplitter, MAX_LINE_CHARS, frameOfLine, frameReader, parseFrame, type FeedFrame } from '../hooks/change-feed'
+import { LineSplitter, MAX_LINE_CHARS, NO_FEED, frameOfLine, frameReader, parseFrame, type FeedEnd, type FeedFrame } from '../hooks/change-feed'
 
 const HELLO = { interface: '1.1', event: 'hello', documents: [{ document: 'tasks', revision: 'r7' }, { document: 'inbox', revision: 'r2' }] }
 const CHANGED = { interface: '1.1', event: 'changed', documents: [{ document: 'tasks', revision: 'r8' }] }
@@ -136,5 +136,15 @@ describe('frameReader', () => {
       'teamrig sent events of interface 2.0, newer than the pane reads: update teamrig-pane',
       'teamrig sent an event too long to be one',
     ])
+  })
+})
+
+describe('NO_FEED', () => {
+  test('ends each stream unavailable at once, with no frame, and its stop does nothing', () => {
+    const ends: FeedEnd[] = []
+    const frames: FeedFrame[] = []
+    const handle = NO_FEED.follow(['tasks'], { onFrame: frame => frames.push(frame), onProblem: () => undefined, onEnd: end => ends.push(end) })
+    handle.stop()
+    expect([ends, frames]).toEqual([['unavailable'], []])
   })
 })

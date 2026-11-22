@@ -162,3 +162,11 @@ export type FeedHandle = { readonly stop: () => void }
 export type ChangeFeed = {
   readonly follow: (documents: readonly string[], listener: FeedListener) => FeedHandle
 }
+
+/** The feed where nothing can be followed (no register found): each stream ends `unavailable` at once. */
+export const NO_FEED: ChangeFeed = {
+  follow: (_documents, listener) => {
+    listener.onEnd('unavailable')
+    return { stop: () => undefined }
+  },
+}
