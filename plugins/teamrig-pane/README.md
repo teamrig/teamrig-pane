@@ -8,9 +8,10 @@ an older one:
 Docks the session's tasks from teamrig's task register (its tasks folder: `events.jsonl`, with the
 `inbox-marks.jsonl` that `teamrig inbox read` writes, the `goals.jsonl` that ranks the plan and the `usage/tasks.week.json` that sizes
 its tasks; see Where the register is, below) on the right of
-Claude Code's fullscreen UI. It reads files only (the Meetings view and the Teams tab's `[Meet]` and `[Wake]` aside, which run teamrig's CLI): a stat poll
-every 3 s re-reads a file only when its size or mtime moved, and a 60 s tick moves the due/age
-labels on. No model calls, so no tokens. Every time is on the team's clock and zone-marked
+Claude Code's fullscreen UI. It reads files only (the Meetings view and the Teams tab's `[Meet]` and `[Wake]` aside, which run teamrig's CLI): the task
+list reads the register again when `teamrig events` (teamrig 0.504.0 or later) marks a document it draws, at
+most once every 5 s, else every 10 s; other views stat their files every 3 s and re-read one only when its size
+or mtime moved; and a 60 s tick moves the due/age labels on. No model calls, so no tokens. Every time is on the team's clock and zone-marked
 (`14:20 IDT`), as teamrig prints it: the team config's `timeZone`, else the machine's zone (the
 session's `TZ`, else the system's). A switch over the list flips it to the session's git changes, or
 to each team session's prompts and replies, or to its own inbox lines, or to the team's tree, or to the team's
@@ -722,8 +723,8 @@ plugin's own work per draw at 100, 500 and 2,000 tasks fell from 11, 53 and 212 
 
 `$.state` outlives a hot reload, so the snapshot is kept under a shape tag (`SNAPSHOT_SHAPE` in
 `hooks/register.tsx`): bump it whenever the `Snapshot` or `TaskRow` type changes, and a reloaded pane
-reads what the older code wrote as not yet read, drawing `Reading the register…` until its first poll
-(at most 3 s), instead of rows with fields missing or a `not tied to a session` line it has not looked for yet. The
+reads what the older code wrote as not yet read, drawing `Reading the register…` until its first read
+(at once on the reload), instead of rows with fields missing or a `not tied to a session` line it has not looked for yet. The
 drawn changes are kept the same way (`CHANGES_SHAPE`), the open diffs too (`DIFFS_SHAPE`, bumped when
 `FileDiff` or `DiffLine` changes), the copies of files written outside git too (`COPIES_SHAPE`, bumped when
 `OutsideCopy` changes), and the repos and files found apart from them

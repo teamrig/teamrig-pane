@@ -282,7 +282,7 @@ A task is two lines, its title and a dim meta line under it:
 | `asked by lead` | A task not started that another session asked for |
 
 A task done today is one dim line, `✓ T11  Signup API`, the time it closed at the right edge. Other messages:
-`Reading the register…` (the first moments, at most 3 seconds), `Nothing active.` (mine) and `No active tasks.` (all).
+`Reading the register…` (the first moments, until the first read), `Nothing active.` (mine) and `No active tasks.` (all).
 While the tasks it asked of others are all mine holds, the line says so:
 `Nothing of yours is active. 1 task you asked of others is below.` (for a pin, `Nothing of web's is active. 2 tasks it
 asked of others are below.`).
@@ -801,6 +801,7 @@ what it shows, run teamrig (see the
 
 The pane reads the register with teamrig's own read modules, copied into the plugin at a pinned teamrig commit,
 and a golden test holds its rows to what `teamrig list` prints. Besides the Meetings view, `[Meet]` and `[Wake]`, which run teamrig's CLI, it
-reads files only: a stat every 3 seconds
-re-reads a file when its size or time moved, and a 60 second tick moves the due and age labels on. Its state
+reads files only: the task list reads the register again when `teamrig events` (teamrig 0.504.0 or later)
+marks a document it draws, at most once every 5 seconds, else every 10 seconds; other views stat their files every
+3 seconds and re-read one when its size or time moved; and a 60 second tick moves the due and age labels on. Its state
 (the size, a pin) lives in the plugin's own store, never in the register.
