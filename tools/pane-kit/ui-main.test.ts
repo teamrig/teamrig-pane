@@ -1,6 +1,9 @@
-import { describe, it } from 'node:test';
+import { describe, it, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 // The dedicated UI's entry takes the terminal as it loads, so no test can import it: this one runs it as the
@@ -23,19 +26,40 @@ interface Ended {
   readonly err: string;
 }
 
-/** Runs the entry, sends `keys` once it drew its first frame, and resolves how it ended. */
-function ranWith(keys: string): Promise<Ended> {
+interface RunOptions {
+  /** The words after the entry. */
+  readonly args?: readonly string[];
+  /** Variables set over the test's own; an undefined one is unset. */
+  readonly env?: Readonly<Record<string, string | undefined>>;
+  readonly cwd?: string;
+  /** Text a frame must show before the keys are sent; any frame will do when none. */
+  readonly until?: string;
+}
+
+/** The test's environment with `over` laid on it, less NODE_TEST_CONTEXT, which is for the runner's own children. */
+function envOf(over: Readonly<Record<string, string | undefined>>): Record<string, string> {
+  const env: Record<string, string> = {};
+  for (const [key, value] of Object.entries({ ...process.env, ...over })) {
+    if (key !== 'NODE_TEST_CONTEXT' && value !== undefined) env[key] = value;
+  }
+  return env;
+}
+
+/** Runs the entry, sends `keys` once it drew a frame showing `until`, and resolves how it ended. */
+function ranWith(keys: string, options: RunOptions = {}): Promise<Ended> {
   return new Promise<Ended>((resolve, reject) => {
-    // A child of a test inherits NODE_TEST_CONTEXT, which is for the runner's own children.
-    const env = Object.fromEntries(Object.entries(process.env).filter(([key]) => key !== 'NODE_TEST_CONTEXT'));
-    const child = spawn(process.execPath, [`--import=${KIT}`, MAIN], { env, stdio: ['pipe', 'pipe', 'pipe'] });
+    const child = spawn(process.execPath, [`--import=${KIT}`, MAIN, ...(options.args ?? [])], {
+      env: envOf(options.env ?? {}),
+      cwd: options.cwd,
+      stdio: ['pipe', 'pipe', 'pipe'],
+    });
     let out = '';
     let err = '';
     let isSent = false;
     const limit = setTimeout(() => child.kill(), LIMIT_MS);
     child.stdout.setEncoding('utf8').on('data', (chunk: string) => {
       out += chunk;
-      if (!isSent && out.includes(FRAME)) {
+      if (!isSent && out.includes(FRAME) && (options.until === undefined || out.includes(options.until))) {
         isSent = true;
         child.stdin.write(keys);
       }
@@ -66,6 +90,43 @@ describe('the dedicated UI entry under node', () => {
 
   it('ends on Ctrl+C read as a key, the terminal given back', async () => {
     const ended = await ranWith('\u0003');
+    assert.equal(ended.err, '');
+    assert.equal(ended.code, 0);
+    assert.ok(ended.out.endsWith(GIVEN_BACK), 'the alternate screen is given back last');
+  });
+
+  it('refuses a command line it cannot read with a usage exit, the screen never taken', async () => {
+    const ended = await ranWith('q', { args: ['--bogus'] });
+    assert.equal(ended.code, 2);
+    assert.ok(ended.err.startsWith('teamrig ui: unknown word "--bogus"'), ended.err);
+    assert.equal(ended.out, '');
+  });
+});
+
+describe('the dedicated UI entry reading a team', () => {
+  let home = '';
+  let cli = '';
+
+  before(async () => {
+    home = await mkdtemp(join(tmpdir(), 'ui-main-'));
+    const team = join(home, 'teams', 'web');
+    await mkdir(team, { recursive: true });
+    await writeFile(join(team, 'config.json'), JSON.stringify({ team: { id: 'web' }, sessions: ['lead'], roles: { lead: 'lead' } }));
+    cli = join(home, 'cli.js');
+    await writeFile(cli, "process.stderr.write('REFUSED fake teamrig'); process.exitCode = 2;\n");
+  });
+
+  after(async () => {
+    await rm(home, { recursive: true, force: true });
+  });
+
+  it('runs the teamrig that started it on the Node.js it names, draws what it answers, and on q exits 0', async () => {
+    const ended = await ranWith('q', {
+      args: ['--team', 'web'],
+      cwd: home,
+      env: { TEAMRIG_HOME: home, TEAMRIG_CLI: cli, TEAMRIG_NODE: process.execPath, USERPROFILE: undefined, HOME: home },
+      until: 'fake teamrig',
+    });
     assert.equal(ended.err, '');
     assert.equal(ended.code, 0);
     assert.ok(ended.out.endsWith(GIVEN_BACK), 'the alternate screen is given back last');
