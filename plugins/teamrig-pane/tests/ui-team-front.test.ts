@@ -1,4 +1,4 @@
-// The dedicated UI's team (ui/team-front.ts): its command line, the CLI and Node.js it calls back, and what it draws
+﻿// The dedicated UI's team (ui/team-front.ts): its command line, the CLI and Node.js it calls back, and what it draws
 // and acts through, read from a team's files through the fake teamrig read (tests/fake-read.ts).
 import { describe, expect, test } from 'claude-code/testing'
 import { POLL_MS, TICK_MS, type Timer } from '../hooks/live'
@@ -6,6 +6,7 @@ import { INITIAL_STATE } from '../hooks/pane-state'
 import { MemoryStore } from '../hooks/pane-store'
 import { registerPaths } from '../hooks/source'
 import type { CliRun } from '../hooks/teamrig-cli'
+import { parseLastTyped } from '../ui/last-typed'
 import type { RunInit } from '../ui/processes'
 import { NO_TEAM_FRONT } from '../ui/program'
 import { NO_TEAM_PROBLEM, TeamFront, uiArgs, uiCli, UI_CONVERSATION, withNode, withTeam, type UiArgs } from '../ui/team-front'
@@ -27,14 +28,30 @@ const EVENTS = [
   createLine('T2', { at: NOW - 3 * HOUR, by: 'po', owner: 'api', title: 'Add the route', source: 'po', ref: null }),
 ]
 
+const SHOP_STATE = `${TEAMS}/shop/state`
+const SHOP_PATHS = registerPaths({ tasksDir: SHOP_STATE, inboxDir: `${SHOP_STATE}/inbox` })
+const SHOP_CONFIG = { team: { id: 'shop' }, sessions: ['boss', 'ops'], roles: { lead: 'boss' } }
+const SHOP_EVENTS = [createLine('T9', { at: NOW - 2 * HOUR, by: 'boss', owner: 'ops', title: 'Restock' })]
+
+/** Where teamrig's prompt hook writes the last-typed record, under the default kit home. */
+const LAST_TYPED = `${HOME}/.teamrig/last-typed.json`
+
+/** A last-typed record as teamrig writes it (teamrig's src/sessions/last-typed.ts). */
+function typedLine(team: string, session: string, at: string): string {
+  return JSON.stringify({ v: 1, team, session, tab: 'tab-1', at })
+}
+
 type Ran = { readonly argv: readonly string[]; readonly init: RunInit }
+
+type RigTimer = { readonly ms: number; readonly fn: () => void; isCancelled: boolean }
 
 type Rig = {
   readonly team: TeamFront
   readonly store: MemoryStore
+  readonly files: MemoryFiles
   readonly runs: Ran[]
   /** The timers started, by their period, and whether each was cancelled. */
-  readonly timers: { readonly ms: number; isCancelled: boolean }[]
+  readonly timers: RigTimer[]
 }
 
 type RigOptions = {
@@ -44,6 +61,8 @@ type RigOptions = {
   /** Thrown by every read of the environment, as a process that denies it would. */
   readonly envError?: Error
   readonly store?: MemoryStore
+  /** The last-typed file's text at the start; none when not given. */
+  readonly lastTyped?: string
 }
 
 /** A store whose every write fails, as one past its quota would. */
@@ -59,14 +78,17 @@ function rig(options: RigOptions = {}): Rig {
   files.write('/work/.teamrig.json', JSON.stringify({ team: 'web' }))
   files.write(`${TEAMS}/web/config.json`, JSON.stringify(CONFIG))
   files.write(PATHS.events, EVENTS.join('\n'))
+  files.write(`${TEAMS}/shop/config.json`, JSON.stringify(SHOP_CONFIG))
+  files.write(SHOP_PATHS.events, SHOP_EVENTS.join('\n'))
+  if (options.lastTyped !== undefined) files.write(LAST_TYPED, options.lastTyped)
   const cwd = options.cwd ?? '/work'
-  const folders = async (path: string): Promise<string[]> => (path === TEAMS ? ['web'] : [])
+  const folders = async (path: string): Promise<string[]> => (path === TEAMS ? ['shop', 'web'] : [])
   const env: Readonly<Record<string, string>> = { TEAMRIG_CLI: CLI_SCRIPT, TEAMRIG_NODE: NODE, ...options.env }
   const read = fakeRead({ env: {}, files, folders, home: HOME, cwd, machineZone: 'UTC' }, () => NOW)
   const store = options.store ?? new MemoryStore(INITIAL_STATE)
   const { envError } = options
   const runs: Ran[] = []
-  const timers: { ms: number; isCancelled: boolean }[] = []
+  const timers: RigTimer[] = []
   const team = new TeamFront({
     args: options.args ?? { team: null, session: null },
     env: name => {
@@ -81,8 +103,8 @@ function rig(options: RigOptions = {}): Rig {
     },
     store,
     now: () => NOW,
-    every: (ms): Timer => {
-      const timer = { ms, isCancelled: false }
+    every: (ms, fn): Timer => {
+      const timer = { ms, fn, isCancelled: false }
       timers.push(timer)
       return {
         cancel: () => {
@@ -94,7 +116,32 @@ function rig(options: RigOptions = {}): Rig {
     home: HOME,
     machineZone: 'UTC',
   })
-  return { team, store, runs, timers }
+  return { team, store, files, runs, timers }
+}
+
+const settled = (): Promise<void> => new Promise(resolve => setTimeout(resolve, 0))
+
+/**
+ * Runs the timer that reads the last-typed record (the third started, after the register's poll and tick), then
+ * lets its reads and runs settle until `done` holds, failing after a bounded number of turns.
+ */
+async function follow(rigged: Rig, done: () => Promise<boolean>): Promise<void> {
+  const timer = rigged.timers[2]
+  if (timer === undefined) throw new Error('no follow timer started')
+  timer.fn()
+  for (let turn = 0; turn < 50; turn += 1) {
+    await settled()
+    if (await done()) return
+  }
+  throw new Error('the follow never settled')
+}
+
+/** One follow turn that should change nothing: the timer runs and its reads settle. */
+async function followIdle(rigged: Rig): Promise<void> {
+  const timer = rigged.timers[2]
+  if (timer === undefined) throw new Error('no follow timer started')
+  timer.fn()
+  for (let turn = 0; turn < 10; turn += 1) await settled()
 }
 
 const FOCUS = (): Promise<void> => Promise.resolve()
@@ -227,6 +274,86 @@ describe("the UI's team", () => {
     const late = rig()
     await late.team.start()
     late.team.stop()
-    expect(late.timers.map(timer => timer.isCancelled)).toEqual([true, true])
+    // The register's poll and tick, and the follow of the last-typed record (no session was named).
+    expect(late.timers.map(timer => [timer.ms, timer.isCancelled])).toEqual([[POLL_MS, true], [TICK_MS, true], [POLL_MS, true]])
+  })
+})
+
+describe('the last-typed record (T5101)', () => {
+  test('reads the record teamrig writes, and none from a damaged, other-format or unsafe one', () => {
+    expect(parseLastTyped(`${typedLine('web', 'po', '2026-11-22T19:00:00.000Z')}\n`)).toEqual({ team: 'web', session: 'po', tab: 'tab-1', at: '2026-11-22T19:00:00.000Z' })
+    expect(parseLastTyped('{"v":1,"team":"web"')).toBe(null)
+    expect(parseLastTyped(JSON.stringify({ v: 2, team: 'web', session: 'po', tab: 't', at: 'a' }))).toBe(null)
+    expect(parseLastTyped(JSON.stringify({ v: 1, team: 'web', session: 'po', tab: 't' }))).toBe(null)
+    expect(parseLastTyped(typedLine('../x', 'po', 'a'))).toBe(null)
+    expect(parseLastTyped(typedLine('web', 'Not A Session', 'a'))).toBe(null)
+    expect(parseLastTyped('[]')).toBe(null)
+  })
+})
+
+describe("the UI follows the session the person last typed in (T5101)", () => {
+  const area = async (rigged: Rig): Promise<string | null> => (await rigged.store.read('snapshot')).area
+
+  test("draws the record's session at the start when it is in the UI's team", async () => {
+    const rigged = rig({ lastTyped: typedLine('web', 'po', 'at-1') })
+    await rigged.team.start()
+    expect(await area(rigged)).toBe('po')
+  })
+
+  test('a new prompt in another session of its team moves the UI there', async () => {
+    const rigged = rig({ lastTyped: typedLine('web', 'po', 'at-1') })
+    await rigged.team.start()
+    rigged.files.write(LAST_TYPED, typedLine('web', 'api', 'at-2'))
+    await follow(rigged, async () => (await area(rigged)) === 'api')
+    expect(await area(rigged)).toBe('api')
+  })
+
+  test('a session named on the command line or in TEAMRIG_SESSION stays pinned, and nothing is followed', async () => {
+    const named = rig({ args: { team: null, session: 'api' }, lastTyped: typedLine('web', 'po', 'at-1') })
+    await named.team.start()
+    expect(await area(named)).toBe('api')
+    expect(named.timers.map(timer => timer.ms)).toEqual([POLL_MS, TICK_MS])
+
+    const fromEnv = rig({ env: { TEAMRIG_SESSION: 'lead' }, lastTyped: typedLine('web', 'po', 'at-1') })
+    await fromEnv.team.start()
+    expect(await area(fromEnv)).toBe('lead')
+    expect(fromEnv.timers.length).toBe(2)
+  })
+
+  test("a record of another team already there at the start leaves the UI on its own team", async () => {
+    const rigged = rig({ lastTyped: typedLine('shop', 'ops', 'at-1') })
+    await rigged.team.start()
+    expect(rigged.runs.at(-1)?.argv.slice(-2)).toEqual(['--team', 'web'])
+    await followIdle(rigged)
+    expect(rigged.runs.every(ran => ran.argv.at(-1) === 'web')).toBe(true)
+    expect((await rigged.store.read('snapshot')).tasks.map(task => task.id)).toEqual(['T1', 'T2'])
+  })
+
+  test("a new prompt in another team's session rebinds the UI to that team and session", async () => {
+    const rigged = rig({ lastTyped: typedLine('web', 'po', 'at-1') })
+    await rigged.team.start()
+    rigged.files.write(LAST_TYPED, typedLine('shop', 'ops', 'at-2'))
+    await follow(rigged, async () => (await rigged.store.read('snapshot')).tasks.some(task => task.id === 'T9'))
+    const snapshot = await rigged.store.read('snapshot')
+    expect(snapshot.area).toBe('ops')
+    expect(snapshot.tasks.map(task => task.id)).toEqual(['T9'])
+    expect(rigged.runs.at(-1)?.argv.slice(-2)).toEqual(['--team', 'shop'])
+    // The old team's poll and tick are stopped; the new team's run beside the follow.
+    expect(rigged.timers.map(timer => [timer.ms, timer.isCancelled])).toEqual([[POLL_MS, true], [TICK_MS, true], [POLL_MS, false], [POLL_MS, false], [TICK_MS, false]])
+  })
+
+  test('a damaged record, no record and the same prompt again change nothing', async () => {
+    const rigged = rig({ lastTyped: typedLine('web', 'po', 'at-1') })
+    await rigged.team.start()
+    rigged.files.write(LAST_TYPED, '{"v":1,')
+    await followIdle(rigged)
+    expect(await area(rigged)).toBe('po')
+    rigged.files.remove(LAST_TYPED)
+    await followIdle(rigged)
+    expect(await area(rigged)).toBe('po')
+    const runs = rigged.runs.length
+    rigged.files.write(LAST_TYPED, typedLine('web', 'po', 'at-1'))
+    await followIdle(rigged)
+    expect(rigged.runs.length).toBe(runs)
   })
 })

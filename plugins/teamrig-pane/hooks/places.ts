@@ -34,7 +34,7 @@ export type PlacesEnv = Readonly<Partial<Record<PlaceVariable, string | undefine
 export const TEAM_POINTER = '.teamrig.json'
 
 /** teamrig's rule for a team id, which becomes part of a path. */
-const TEAM_ID = /^[a-z][a-z0-9-]{0,31}$/
+export const TEAM_ID = /^[a-z][a-z0-9-]{0,31}$/
 
 /** What the settings file may set; every key is optional. */
 const SETTING_KEYS = ['goalsDoc'] as const
