@@ -98,7 +98,7 @@ function unreadable(why: string): { kind: 'unreadable'; reason: string } {
 
 describe('planOf', () => {
   test('reads a planned task field by field, its dates as moments', () => {
-    expect(readOf(documentOf([served()]))).toEqual({ plan: { at: Date.parse(AT), validUntil: null, week: null, tasks: [PLACE], finished: [] }, problems: [] })
+    expect(readOf(documentOf([served()]))).toEqual({ plan: { at: Date.parse(AT), validUntil: null, week: null, tasks: [PLACE], finished: [], ownerCards: null }, problems: [] })
   })
 
   test('reads the judging time, the moment the plan stands until, the week and the finished tasks', () => {
@@ -107,7 +107,7 @@ describe('planOf', () => {
       { id: 'T5', workClass: 'Upkeep' },
     ]
     const { plan, problems } = readOf(documentOf([], { validUntil: DUE_AT, week: '2026-03-02', finished }))
-    expect(plan).toEqual({ at: Date.parse(AT), validUntil: Date.parse(DUE_AT), week: '2026-03-02', tasks: [], finished })
+    expect(plan).toEqual({ at: Date.parse(AT), validUntil: Date.parse(DUE_AT), week: '2026-03-02', tasks: [], finished, ownerCards: null })
     expect(problems).toEqual([])
   })
 
@@ -148,7 +148,7 @@ describe('planOf', () => {
 
   test('passes over a field a later minor adds, on the document, a task and the records in it', () => {
     const task = served({ lane: 'fast', due: { due: '2026-03-09', at: DUE_AT, from: 'T9', slack: 2 }, goal: { tag: 'G2', rank: 1, title: 'Ship' } })
-    expect(readOf(documentOf([task], { horizon: 14 }))).toEqual({ plan: { at: Date.parse(AT), validUntil: null, week: null, tasks: [PLACE], finished: [] }, problems: [] })
+    expect(readOf(documentOf([task], { horizon: 14 }))).toEqual({ plan: { at: Date.parse(AT), validUntil: null, week: null, tasks: [PLACE], finished: [], ownerCards: null }, problems: [] })
   })
 
   test('hands every text out as the pane may draw it', () => {
@@ -191,7 +191,7 @@ describe('planOf', () => {
   test('leaves out a finished task it cannot read, in a line of its own', () => {
     const finished = [{ id: 'T2', workClass: 'Roadmap' }, { id: 'T5' }, 7]
     const { plan, problems } = readOf(documentOf([planned('T9', { band: null })], { finished }))
-    expect(plan).toEqual({ at: Date.parse(AT), validUntil: null, week: null, tasks: [], finished: [{ id: 'T2', workClass: 'Roadmap' }] })
+    expect(plan).toEqual({ at: Date.parse(AT), validUntil: null, week: null, tasks: [], finished: [{ id: 'T2', workClass: 'Roadmap' }], ownerCards: null })
     expect(problems).toEqual([
       'teamrig served 1 planned task the pane cannot read, T9 (band): update teamrig-pane',
       'teamrig served 2 finished tasks the pane cannot read, T5 (workClass), an entry that is no finished task: update teamrig-pane',
@@ -210,5 +210,30 @@ describe('planOf', () => {
     if (noTasks.kind !== 'document') throw new Error('the fixture is no document')
     expect(planOf(noTasks.document)).toEqual(unreadable('holds no task list: update teamrig'))
     expect(planOf(documentOf([], { finished: {} }))).toEqual(unreadable('holds no finished list: update teamrig'))
+  })
+
+  test('reads each session with a card on the owner, its put-off cards with the stored time and the same moment', () => {
+    const ownerCards = [
+      { session: 'web', due: ['T7', 'T3'], later: [] },
+      { session: 'api', due: [], later: [{ id: 'T9', until: '2026-03-09', at: DUE_AT }, { id: 'T4', until: 'soon', at: null }] },
+    ]
+    const { plan, problems } = readOf(documentOf([], { ownerCards }))
+    expect(plan.ownerCards).toEqual([
+      { session: 'web', due: ['T7', 'T3'], later: [] },
+      { session: 'api', due: [], later: [{ id: 'T9', until: '2026-03-09', at: Date.parse(DUE_AT) }, { id: 'T4', until: 'soon', at: null }] },
+    ])
+    expect(problems).toEqual([])
+  })
+
+  test('holds no owner cards from a teamrig older than interface 1.5, and is unreadable with cards that are no list', () => {
+    expect(readOf(documentOf([])).plan.ownerCards).toBeNull()
+    expect(planOf(documentOf([], { ownerCards: {} }))).toEqual(unreadable('holds owner cards that are no list: update teamrig'))
+  })
+
+  test("leaves out a session's cards it cannot read, in a line of its own", () => {
+    const ownerCards = [{ session: 'web', due: ['T7'], later: [] }, { session: 'api', due: 'T3', later: [] }, { due: [], later: [] }]
+    const { plan, problems } = readOf(documentOf([], { ownerCards }))
+    expect(plan.ownerCards).toEqual([{ session: 'web', due: ['T7'], later: [] }])
+    expect(problems).toEqual([`teamrig served 2 session card lists the pane cannot read, api (due), a session card list (session): update teamrig-pane`])
   })
 })

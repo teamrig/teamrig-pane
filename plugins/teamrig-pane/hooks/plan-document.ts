@@ -3,9 +3,10 @@
 // in plan order, the place in the list being the rank, each with the keys of that order (so tasks of several teams
 // sort together as teamrig sorts them), what its score was read from, the tasks it needs and the ones that need it,
 // and who moves first so it can finish; beside them the finished tasks the register still holds, each with the work
-// class its rank is shown with. It names tasks by id alone: a reader joins them to the `tasks` document's rows. The
-// order served is kept. A planned or finished task with a field of another type is left out and the left-out ones
-// are told in one line, rather than a task drawn at a place teamrig did not give it; a move of a kind this pane does
+// class its rank is shown with; and from interface 1.5 each session's cards on the owner, due now and later. It
+// names tasks by id alone: a reader joins them to the `tasks` document's rows. The order served is kept. A planned
+// or finished task, or a session's cards, with a field of another type is left out and the left-out ones are told
+// in one line, rather than a task drawn at a place teamrig did not give it; a move of a kind this pane does
 // not know reads as unknown, as the interface says a reader may pass one over. `validUntil` is the first moment an
 // answer here may change with no file moving: teamrig's revision covers files and never the clock, so past it the
 // caller asks again with no revision held. An `unchanged` answer holds no plan, so it is never handed here. Pure.
@@ -84,6 +85,18 @@ export type PlannedTask = {
 /** A finished task and the work class its rank is shown with. */
 export type FinishedTask = { readonly id: string; readonly workClass: string }
 
+/** A card the owner put off: the time it comes back as stored, and the same moment; null for a text that reads as no time. */
+export type LaterCard = { readonly id: string; readonly until: string; readonly at: number | null }
+
+/** One session's cards on the owner, as `teamrig meet` asks them. */
+export type SessionCards = {
+  readonly session: string
+  /** The ids the lead asks the owner now, in plan order. */
+  readonly due: readonly string[]
+  /** The cards the owner put off, the soonest back first. */
+  readonly later: readonly LaterCard[]
+}
+
 /** What the `plan` document says. */
 export type PlanRead = {
   /** When teamrig judged the plan, in milliseconds. */
@@ -96,6 +109,8 @@ export type PlanRead = {
   readonly tasks: readonly PlannedTask[]
   /** The finished tasks the register still holds, in the order served. */
   readonly finished: readonly FinishedTask[]
+  /** Each session with a card on the owner, in the order served; null from a teamrig older than interface 1.5. */
+  readonly ownerCards: readonly SessionCards[] | null
 }
 
 function dueOf(due: Fields | null): PlanDue | null {
@@ -164,11 +179,26 @@ function finishedOf(task: Fields): FinishedTask {
   return { id: task.text('id'), workClass: task.text('workClass') }
 }
 
+function laterOf(card: Fields): LaterCard {
+  return { id: card.text('id'), until: card.text('until'), at: card.momentOrNull('at') }
+}
+
+function cardsOf(cards: Fields): SessionCards {
+  return { session: cards.text('session'), due: cards.texts('due'), later: cards.parts('later').map(laterOf) }
+}
+
 /** The entries of one served list that could be read, in its order, and which were left out with the first field that could not be. */
 type ListRead<T> = { readonly values: T[]; readonly left: string[] }
 
-/** Reads each entry of `served` with `read`; `what` names an entry whose id could not be read. */
-function listOf<T extends { readonly id: string }>(served: readonly unknown[], what: string, read: (entry: Fields) => T): ListRead<T> {
+/** How an entry of a list is named in a left-out line: the field it is known by, and its value as read. */
+type Naming<T> = { readonly key: string; readonly name: (value: T) => string }
+
+const BY_ID: Naming<{ readonly id: string }> = { key: 'id', name: value => value.id }
+
+const BY_SESSION: Naming<SessionCards> = { key: 'session', name: value => value.session }
+
+/** Reads each entry of `served` with `read`; `what` names an entry whose `naming.key` could not be read. */
+function listOf<T>(served: readonly unknown[], what: string, read: (entry: Fields) => T, naming: Naming<NoInfer<T>>): ListRead<T> {
   const values: T[] = []
   const left: string[] = []
   for (const entry of served) {
@@ -181,7 +211,7 @@ function listOf<T extends { readonly id: string }>(served: readonly unknown[], w
     const bad = fields.bad
     const [first] = bad
     if (first === undefined) values.push(value)
-    else left.push(`${bad.includes('id') ? `a ${what}` : value.id} (${first})`)
+    else left.push(`${bad.includes(naming.key) ? `a ${what}` : naming.name(value)} (${first})`)
   }
   return { values, left }
 }
@@ -205,14 +235,18 @@ export function planOf(document: ReadDocument): BodyRead<PlanRead> {
   if (!isList(servedTasks)) return unreadable('holds no task list: update teamrig')
   const servedFinished = document.fields['finished']
   if (!isList(servedFinished)) return unreadable('holds no finished list: update teamrig')
-  const tasks = listOf(servedTasks, 'planned task', plannedOf)
-  const finished = listOf(servedFinished, 'finished task', finishedOf)
+  const servedCards = document.fields['ownerCards']
+  if (servedCards !== undefined && !isList(servedCards)) return unreadable('holds owner cards that are no list: update teamrig')
+  const tasks = listOf(servedTasks, 'planned task', plannedOf, BY_ID)
+  const finished = listOf(servedFinished, 'finished task', finishedOf, BY_ID)
+  const cards = servedCards === undefined ? null : listOf(servedCards, 'session card list', cardsOf, BY_SESSION)
   return {
     kind: 'read',
-    value: { at, validUntil, week, tasks: tasks.values, finished: finished.values },
+    value: { at, validUntil, week, tasks: tasks.values, finished: finished.values, ownerCards: cards?.values ?? null },
     problems: [
       ...(tasks.left.length === 0 ? [] : [leftOutLine('planned task', tasks.left)]),
       ...(finished.left.length === 0 ? [] : [leftOutLine('finished task', finished.left)]),
+      ...(cards === null || cards.left.length === 0 ? [] : [leftOutLine('session card list', cards.left)]),
     ],
   }
 }
