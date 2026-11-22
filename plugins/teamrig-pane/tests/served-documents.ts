@@ -184,6 +184,78 @@ export function planDocument(revision: string, tasks: readonly JsonRecord[], ove
   return { interface: '1.1', document: 'plan', revision, problems: [], at: new Date(NOW).toISOString(), validUntil: null, week: null, tasks, finished: [], ...over }
 }
 
+/** A task as the `stats` document names it, slim: open, owned by api, p2, with no due date. */
+export function statsTask(id: string, over: JsonRecord = {}): JsonRecord {
+  return { id, title: { text: `Title of ${id}`, source: 'team' }, owner: 'api', priority: 2, status: 'open', due: null, ...over }
+}
+
+/** An area cell as the `stats` document serves it: all clear, counting `tasks`. */
+export function areaCell(tasks: readonly string[] = [], over: JsonRecord = {}): JsonRecord {
+  return { value: tasks.length, usual: tasks.length, level: 'good', tasks, ...over }
+}
+
+/** A session of team shop as an area, every cell all clear and empty unless `cells` says otherwise. */
+export function statsArea(session: string | null, cells: JsonRecord = {}, over: JsonRecord = {}): JsonRecord {
+  return {
+    team: 'shop',
+    session,
+    active: 1,
+    cells: { bugs: areaCell(), p1: areaCell(), p1Late: areaCell(), low: areaCell(), waits: areaCell(), ...cells },
+    ...over,
+  }
+}
+
+const ZERO_MEDIAN = { bugs: 0, p1: 0, p1Late: 0, low: 0, waits: 0, active: 0 }
+
+/**
+ * The `stats` document of team shop as interface 1.6 serves it (teamrig src/interface/stats.ts StatsBody): one day, no
+ * goal and no area, T1 behind the active count; `over` sets any field.
+ */
+export function statsDocument(revision: string, over: JsonRecord = {}): JsonRecord {
+  const zeroActive = { open: 0, 'in-progress': 0, verifying: 0, waiting: 0 }
+  return {
+    interface: '1.6',
+    document: 'stats',
+    revision,
+    problems: [],
+    at: new Date(NOW).toISOString(),
+    validUntil: new Date(NOW + HOUR).toISOString(),
+    range: '30d',
+    session: null,
+    days: [{ day: '2026-03-02', opened: 1, done: 0, dropped: 0, active: { ...zeroActive, open: 1 }, atLimit: false }],
+    opened: 1,
+    closedTasks: 0,
+    droppedTasks: 0,
+    net: 1,
+    closes: 0,
+    recent: { days: 14, net: 1 },
+    active: { ...zeroActive, open: 1 },
+    all: { active: 1, leadTime: { count: 0, median: null, p85: null }, cycleTime: { count: 0, median: null, p85: null }, overdue: { count: 0, p1: 0 }, due: { total: 0, onTime: 0 } },
+    newWork: { total: 1, bySource: { self: 0, owner: 0, lead: 1, github: 0, session: 0 }, bugs: 0, byPriority: [{ priority: 2, count: 1 }], byGoal: [], noGoal: 1 },
+    activeByAge: [{ label: '0-1 d', count: 1 }],
+    neverStarted: 0,
+    lateDays: [],
+    dueMoved: 0,
+    waits: { waiting: 0, byKind: { decision: 0, approval: 0, task: 0, time: 0 }, ownerDecisions: { count: 0, oldestDays: null } },
+    bugs: { active: 0, opened: 0, fixed: 0 },
+    people: [],
+    splits: [],
+    health: {
+      closeOpen: { level: 'warn', ratio: 0 },
+      backlog: { level: 'good', net: 1, active: 1 },
+      overdue: { level: 'good', count: 0, p1: 0 },
+      ownerDecisions: { level: 'good', count: 0, oldestDays: null },
+      backlogClears: { level: 'good', weeks: null },
+    },
+    behind: { active: ['T1'], opened: ['T1'], closed: [], overdue: [], overdueP1: [], ownerDecisions: [] },
+    goals: { goals: [], offGoal: 0, doneInRange: 0 },
+    areas: { teams: { areas: [], median: ZERO_MEDIAN }, sessions: { areas: [], median: ZERO_MEDIAN } },
+    tasks: [statsTask('T1')],
+    cuts: [],
+    ...over,
+  }
+}
+
 /** One run as the fake teamrig was asked it. */
 export type Asked = { documents: readonly string[]; session: string | null; unless: string | null; conversation: string | null }
 
