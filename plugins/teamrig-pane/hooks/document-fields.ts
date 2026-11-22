@@ -186,3 +186,33 @@ export class Fields {
     return standIn
   }
 }
+
+/** The entries of one served list that could be read, in its order, and which were left out with the first field that could not be. */
+export type ListRead<T> = { readonly values: T[]; readonly left: string[] }
+
+/** How an entry of a list is named in a left-out line: the field it is known by, and its value as read. */
+export type Naming<T> = { readonly key: string; readonly name: (value: T) => string }
+
+export const BY_ID: Naming<{ readonly id: string }> = { key: 'id', name: value => value.id }
+
+/**
+ * Reads each entry of `served` with `read`, keeping one only when none of its fields was noted; `what` names an entry
+ * whose `naming.key` could not be read.
+ */
+export function listOf<T>(served: readonly unknown[], what: string, read: (entry: Fields) => T, naming: Naming<NoInfer<T>>): ListRead<T> {
+  const values: T[] = []
+  const left: string[] = []
+  for (const entry of served) {
+    if (!isRecord(entry)) {
+      left.push(`an entry that is no ${what}`)
+      continue
+    }
+    const fields = new Fields(entry)
+    const value = read(fields)
+    const bad = fields.bad
+    const [first] = bad
+    if (first === undefined) values.push(value)
+    else left.push(`${bad.includes(naming.key) ? `a ${what}` : naming.name(value)} (${first})`)
+  }
+  return { values, left }
+}
