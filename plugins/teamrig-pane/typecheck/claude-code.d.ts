@@ -135,6 +135,17 @@ declare module 'claude-code' {
     readonly isStdoutTruncated: boolean
     readonly isStderrTruncated: boolean
   }
+  /** A child `$.process.spawn` starts: `$.process.run`'s rules, no shell; `input` is written and stdin closed. */
+  export type ProcessSpawnRequest = { readonly argv: readonly string[]; readonly cwd?: string; readonly env?: Readonly<Record<string, string>>; readonly input?: string }
+  /** One piece of a child's output, cut wherever its write ended; never empty. */
+  export type ProcessSpawnChunk = { readonly stream: 'stdout' | 'stderr'; readonly text: string }
+  /** How the child ended: its code, else the signal (on Windows a killed child reads as a code). */
+  export type ProcessSpawnResult = { readonly code: number | null; readonly signal: string | null }
+  /**
+   * A streaming call's answer: its pieces, then its end as the generator's return. The loop is the child's life:
+   * leaving it, `return()` on it or the module unloading kills the child; the first pull rejects if it cannot start.
+   */
+  export type HookStream<C, R> = AsyncGenerator<C, R> & { readonly result: Promise<R> }
   /**
    * The engine's version: `version` as `claude --version` prints it (`2.1.280`, or `2.1.280-dev.<date>.<sha>` for a
    * development build), `base` its release (`2.1.280`, `2.1.280-dev`) and `builtAt` an ISO time, each absent when unknown.
@@ -189,7 +200,10 @@ declare module 'claude-code' {
     readonly session: { id(): Promise<string>; version(): Promise<SessionVersion> }
     readonly clock: { now(): Promise<number>; every(ms: number, fn: () => void): Timer }
     readonly store: { get(key: string): Promise<unknown>; set(key: string, value: unknown): Promise<void>; delete(key: string): Promise<void> }
-    readonly process: { run(argv: readonly string[], init?: ProcessInit): Promise<ProcessResult> }
+    readonly process: {
+      run(argv: readonly string[], init?: ProcessInit): Promise<ProcessResult>
+      spawn(request: ProcessSpawnRequest): HookStream<ProcessSpawnChunk, ProcessSpawnResult>
+    }
     readonly ui: {
       open(pane: PaneOpen): Promise<{ isPlaced: boolean }>
       resolve(request: RenderRequest): Components
