@@ -58,16 +58,25 @@ function failed(reason: string): { readonly kind: 'failed'; readonly reason: str
 }
 
 /**
+ * The CLI's words naming who asks, which `read` and `events` take alike, so a follower watches the documents a read
+ * would build. A conversation id teamrig would refuse the run for is left out, so the run still goes, with no `self`.
+ */
+export function askerWords(asker: ReadAsker): string[] {
+  const words: string[] = []
+  if (asker.session !== null) words.push('--session', asker.session)
+  if (CONVERSATION.test(asker.conversation)) words.push('--conversation', asker.conversation)
+  return words
+}
+
+/**
  * The CLI's words for one read of `asks` as `asker`. The revisions held go in one `--unless`, a comma list: teamrig's
- * parser refuses a flag given twice. A conversation id teamrig would refuse the run for is left out, so the documents
- * are still read, with no `self`. `narrowing` adds a flag for each of its fields given.
+ * parser refuses a flag given twice. `narrowing` adds a flag for each of its fields given.
  */
 export function readWords(asks: readonly ReadAsk[], asker: ReadAsker, narrowing: ReadNarrowing = {}): string[] {
   const words = ['read', ...asks.map(ask => ask.name), '--json']
   const held = asks.flatMap(ask => (ask.held === null ? [] : [`${ask.name}=${ask.held}`]))
   if (held.length > 0) words.push('--unless', held.join(','))
-  if (asker.session !== null) words.push('--session', asker.session)
-  if (CONVERSATION.test(asker.conversation)) words.push('--conversation', asker.conversation)
+  words.push(...askerWords(asker))
   if (narrowing.team !== undefined) words.push('--team', narrowing.team)
   if (narrowing.owner !== undefined) words.push('--owner', narrowing.owner)
   if (narrowing.range !== undefined) words.push('--range', narrowing.range)
