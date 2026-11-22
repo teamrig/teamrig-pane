@@ -10,8 +10,8 @@
 // not know reads as unknown, as the interface says a reader may pass one over. `validUntil` is the first moment an
 // answer here may change with no file moving: teamrig's revision covers files and never the clock, so past it the
 // caller asks again with no revision held. An `unchanged` answer holds no plan, so it is never handed here. Pure.
-import { Fields, isList, leftOutLine, type BodyRead } from './document-fields'
-import { isRecord, type ReadDocument } from './read-document'
+import { BY_ID, Fields, isList, leftOutLine, listOf, type BodyRead, type Naming } from './document-fields'
+import type { ReadDocument } from './read-document'
 
 /** The date a task works to: its own due, or the earlier one of a task that needs it. */
 export type PlanDue = {
@@ -187,34 +187,7 @@ function cardsOf(cards: Fields): SessionCards {
   return { session: cards.text('session'), due: cards.texts('due'), later: cards.parts('later').map(laterOf) }
 }
 
-/** The entries of one served list that could be read, in its order, and which were left out with the first field that could not be. */
-type ListRead<T> = { readonly values: T[]; readonly left: string[] }
-
-/** How an entry of a list is named in a left-out line: the field it is known by, and its value as read. */
-type Naming<T> = { readonly key: string; readonly name: (value: T) => string }
-
-const BY_ID: Naming<{ readonly id: string }> = { key: 'id', name: value => value.id }
-
 const BY_SESSION: Naming<SessionCards> = { key: 'session', name: value => value.session }
-
-/** Reads each entry of `served` with `read`; `what` names an entry whose `naming.key` could not be read. */
-function listOf<T>(served: readonly unknown[], what: string, read: (entry: Fields) => T, naming: Naming<NoInfer<T>>): ListRead<T> {
-  const values: T[] = []
-  const left: string[] = []
-  for (const entry of served) {
-    if (!isRecord(entry)) {
-      left.push(`an entry that is no ${what}`)
-      continue
-    }
-    const fields = new Fields(entry)
-    const value = read(fields)
-    const bad = fields.bad
-    const [first] = bad
-    if (first === undefined) values.push(value)
-    else left.push(`${bad.includes(naming.key) ? `a ${what}` : naming.name(value)} (${first})`)
-  }
-  return { values, left }
-}
 
 function unreadable(why: string): BodyRead<PlanRead> {
   return { kind: 'unreadable', reason: `teamrig's plan document ${why}` }
