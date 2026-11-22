@@ -57,6 +57,15 @@ describe('readWords', () => {
     expect(readWords(asks, AS_API)).toEqual(['read', 'tasks', 'inbox', 'config', '--json', '--unless', 'tasks=r7,config=c1', '--session', 'api', '--conversation', 'c-1'])
   })
 
+  test('narrows the documents by each flag given, and by none when given none', () => {
+    const stats: readonly ReadAsk[] = [{ name: 'stats', held: null }]
+    expect(readWords(stats, UNTIED, { team: 'acme', owner: 'api', range: '90d' })).toEqual([
+      'read', 'stats', '--json', '--conversation', 'c-1', '--team', 'acme', '--owner', 'api', '--range', '90d',
+    ])
+    expect(readWords(stats, UNTIED, { range: 'all' })).toEqual(['read', 'stats', '--json', '--conversation', 'c-1', '--range', 'all'])
+    expect(readWords(stats, UNTIED, {})).toEqual(readWords(stats, UNTIED))
+  })
+
   test('with one revision held the flag names it alone', () => {
     expect(readWords([{ name: 'tasks', held: 'r7' }, { name: 'inbox', held: null }], UNTIED)).toEqual(['read', 'tasks', 'inbox', '--json', '--unless', 'tasks=r7', '--conversation', 'c-1'])
   })
