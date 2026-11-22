@@ -71,6 +71,8 @@ type Run = {
   restartMs: number
   /** Runs while a stream is open, to RESTART_MAX_MS: at its fire the restart wait starts over. */
   steady: Timer | null
+  /** Runs from a stream's end to its next follow; null while one is followed. */
+  restart: Timer | null
   readonly problems: Set<string>
 }
 
@@ -117,6 +119,7 @@ export class Refresher {
       served: new Set(),
       restartMs: RESTART_MIN_MS,
       steady: null,
+      restart: null,
       problems: new Set(),
     }
     this.run = run
@@ -140,6 +143,21 @@ export class Refresher {
   /** Tells that what is drawn changed (a switch of view, the dock opened): a view left stale while hidden reads now. */
   viewChanged(): void {
     if (this.run !== null) this.pumpAll(this.run)
+  }
+
+  /**
+   * Ends the stream and follows again at once, keeping what each view holds: for words the stream was started with
+   * that changed (the session the pane reads as, whose inbox it follows). A wait to restart an ended one is dropped.
+   */
+  refollow(): void {
+    const run = this.run
+    if (run === null) return
+    const handle = run.handle
+    this.unfollow(run)
+    handle?.stop()
+    this.drop(run, run.restart)
+    run.restart = null
+    this.follow(run)
   }
 
   feedState(): FeedState {
@@ -204,15 +222,23 @@ export class Refresher {
     }
   }
 
-  private ended(run: Run, end: FeedEnd): void {
+  /** Forgets the stream followed: its frames and end are dropped from here on, and the tick reads as without one. */
+  private unfollow(run: Run): void {
     run.stream = null
     run.handle = null
     run.isLive = false
     run.served = new Set()
     this.drop(run, run.steady)
     run.steady = null
+  }
+
+  private ended(run: Run, end: FeedEnd): void {
+    this.unfollow(run)
     if (end === 'unavailable') return
-    this.once(run, run.restartMs, () => this.follow(run))
+    run.restart = this.once(run, run.restartMs, () => {
+      run.restart = null
+      this.follow(run)
+    })
     run.restartMs = Math.min(run.restartMs * 2, RESTART_MAX_MS)
   }
 

@@ -300,6 +300,31 @@ describe('Refresher', () => {
     expect(tasks.reads).toBe(4)
   })
 
+  test('refollow ends the stream and follows again at once, keeping the views read', async () => {
+    const { tasks, inbox, feed, refresher } = await live()
+    refresher.refollow()
+    await settle()
+    expect(feed.follows.length).toBe(2)
+    expect(feed.follows[0]?.isStopped).toBe(true)
+    expect(feed.follows[1]?.isStopped).toBe(false)
+    expect(refresher.feedState().isLive).toBe(false)
+    expect([tasks.reads, inbox.reads]).toEqual([1, 1])
+    feed.follows[0]?.listener.onFrame(changed(['tasks', 'r8']))
+    await settle()
+    expect(tasks.reads).toBe(1)
+    feed.stream().onFrame(hello(['tasks', 'r8'], ['inbox', 'r2']))
+    await settle()
+    expect([tasks.reads, inbox.reads]).toEqual([2, 1])
+  })
+
+  test('refollow drops a pending restart, so an ended stream is not followed twice', async () => {
+    const { feed, clock, refresher } = await live()
+    feed.stream().onEnd('ended')
+    refresher.refollow()
+    await clock.advance(RESTART_MAX_MS)
+    expect(feed.follows.length).toBe(2)
+  })
+
   test('a failed read, or one that rejects, is read again on the tick until it works', async () => {
     const { tasks, inbox, feed, clock } = await live()
     tasks.answer = false
