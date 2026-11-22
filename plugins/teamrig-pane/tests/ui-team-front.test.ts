@@ -1,7 +1,8 @@
 ﻿// The dedicated UI's team (ui/team-front.ts): its command line, the CLI and Node.js it calls back, and what it draws
 // and acts through, read from a team's files through the fake teamrig read (tests/fake-read.ts).
 import { describe, expect, test } from 'claude-code/testing'
-import { POLL_MS, TICK_MS, type Timer } from '../hooks/live'
+import { POLL_MS as FOLLOW_MS, TICK_MS, type Timer } from '../hooks/live'
+import { GAP_MS, POLL_MS } from '../hooks/refresher'
 import { INITIAL_STATE } from '../hooks/pane-state'
 import { MemoryStore } from '../hooks/pane-store'
 import { registerPaths } from '../hooks/source'
@@ -43,15 +44,25 @@ function typedLine(team: string, session: string, at: string): string {
 
 type Ran = { readonly argv: readonly string[]; readonly init: RunInit }
 
-type RigTimer = { readonly ms: number; readonly fn: () => void; isCancelled: boolean }
+type RigTimer = { readonly ms: number; isCancelled: boolean; readonly fire: () => void }
 
 type Rig = {
   readonly team: TeamFront
   readonly store: MemoryStore
   readonly files: MemoryFiles
   readonly runs: Ran[]
-  /** The timers started, by their period, and whether each was cancelled. */
+  /** The timers started, by their period, whether each was cancelled, and its call. */
   readonly timers: RigTimer[]
+}
+
+/** Lets the reads a timer started finish: each step of a read waits a turn of the queue. */
+async function drain(): Promise<void> {
+  for (let turn = 0; turn < 50; turn += 1) await Promise.resolve()
+}
+
+/** The live timer that reads the last-typed record (team-front.ts, live.ts POLL_MS), null when none runs. */
+function followTimer(rigged: Rig): RigTimer | null {
+  return rigged.timers.filter(timer => timer.ms === FOLLOW_MS && !timer.isCancelled).at(-1) ?? null
 }
 
 type RigOptions = {
@@ -104,7 +115,7 @@ function rig(options: RigOptions = {}): Rig {
     store,
     now: () => NOW,
     every: (ms, fn): Timer => {
-      const timer = { ms, fn, isCancelled: false }
+      const timer = { ms, isCancelled: false, fire: fn }
       timers.push(timer)
       return {
         cancel: () => {
@@ -122,13 +133,13 @@ function rig(options: RigOptions = {}): Rig {
 const settled = (): Promise<void> => new Promise(resolve => setTimeout(resolve, 0))
 
 /**
- * Runs the timer that reads the last-typed record (the third started, after the register's poll and tick), then
- * lets its reads and runs settle until `done` holds, failing after a bounded number of turns.
+ * Runs the timer that reads the last-typed record, then lets its reads and runs settle until `done` holds, failing
+ * after a bounded number of turns.
  */
 async function follow(rigged: Rig, done: () => Promise<boolean>): Promise<void> {
-  const timer = rigged.timers[2]
-  if (timer === undefined) throw new Error('no follow timer started')
-  timer.fn()
+  const timer = followTimer(rigged)
+  if (timer === null) throw new Error('no follow timer started')
+  timer.fire()
   for (let turn = 0; turn < 50; turn += 1) {
     await settled()
     if (await done()) return
@@ -138,9 +149,9 @@ async function follow(rigged: Rig, done: () => Promise<boolean>): Promise<void> 
 
 /** One follow turn that should change nothing: the timer runs and its reads settle. */
 async function followIdle(rigged: Rig): Promise<void> {
-  const timer = rigged.timers[2]
-  if (timer === undefined) throw new Error('no follow timer started')
-  timer.fn()
+  const timer = followTimer(rigged)
+  if (timer === null) throw new Error('no follow timer started')
+  timer.fire()
   for (let turn = 0; turn < 10; turn += 1) await settled()
 }
 
@@ -216,7 +227,24 @@ describe("the UI's team", () => {
     expect(first?.argv).toContain(UI_CONVERSATION)
     expect(first?.argv.slice(-2)).toEqual(['--team', 'web'])
     expect(first?.init.cwd).toBe('/work')
-    expect(timers.map(timer => timer.ms)).toEqual([POLL_MS, TICK_MS])
+    expect(timers.map(timer => timer.ms).slice(0, 2)).toEqual([TICK_MS, POLL_MS])
+  })
+
+  test("reads the team again at the refresher's tick, with no event stream to follow", async () => {
+    const { team, runs, timers } = rig({ args: { team: null, session: 'api' } })
+    await team.start()
+    await drain()
+    const before = runs.length
+    const poll = timers.find(timer => timer.ms === POLL_MS)
+    expect(poll?.isCancelled).toBe(false)
+    poll?.fire()
+    // The tick's read waits out the gap from the refresher's first read.
+    for (const gap of timers.filter(timer => timer.ms === GAP_MS && !timer.isCancelled)) gap.fire()
+    await drain()
+    expect(runs.length).toBeGreaterThan(before)
+    expect(runs.at(-1)?.argv.slice(0, 3)).toEqual([NODE, CLI_SCRIPT, 'read'])
+    expect(runs.some(ran => ran.argv.includes('events'))).toBe(false)
+    team.stop()
   })
 
   test("draws the session the environment's TEAMRIG_SESSION names when the command line names none", async () => {
@@ -274,8 +302,9 @@ describe("the UI's team", () => {
     const late = rig()
     await late.team.start()
     late.team.stop()
-    // The register's poll and tick, and the follow of the last-typed record (no session was named).
-    expect(late.timers.map(timer => [timer.ms, timer.isCancelled])).toEqual([[POLL_MS, true], [TICK_MS, true], [POLL_MS, true]])
+    // The register's tick, the refresher's poll, and the follow of the last-typed record (no session was named).
+    expect(late.timers.some(timer => timer.ms === FOLLOW_MS)).toBe(true)
+    expect(late.timers.every(timer => timer.isCancelled)).toBe(true)
   })
 })
 
@@ -312,12 +341,12 @@ describe("the UI follows the session the person last typed in (T5101)", () => {
     const named = rig({ args: { team: null, session: 'api' }, lastTyped: typedLine('web', 'po', 'at-1') })
     await named.team.start()
     expect(await area(named)).toBe('api')
-    expect(named.timers.map(timer => timer.ms)).toEqual([POLL_MS, TICK_MS])
+    expect(followTimer(named)).toBe(null)
 
     const fromEnv = rig({ env: { TEAMRIG_SESSION: 'lead' }, lastTyped: typedLine('web', 'po', 'at-1') })
     await fromEnv.team.start()
     expect(await area(fromEnv)).toBe('lead')
-    expect(fromEnv.timers.length).toBe(2)
+    expect(followTimer(fromEnv)).toBe(null)
   })
 
   test("a record of another team already there at the start leaves the UI on its own team", async () => {
@@ -338,8 +367,11 @@ describe("the UI follows the session the person last typed in (T5101)", () => {
     expect(snapshot.area).toBe('ops')
     expect(snapshot.tasks.map(task => task.id)).toEqual(['T9'])
     expect(rigged.runs.at(-1)?.argv.slice(-2)).toEqual(['--team', 'shop'])
-    // The old team's poll and tick are stopped; the new team's run beside the follow.
-    expect(rigged.timers.map(timer => [timer.ms, timer.isCancelled])).toEqual([[POLL_MS, true], [TICK_MS, true], [POLL_MS, false], [POLL_MS, false], [TICK_MS, false]])
+    // The old team's tick and refresher poll are stopped; the new team's run beside the follow.
+    const periods = (cancelled: boolean): number[] =>
+      rigged.timers.filter(timer => timer.isCancelled === cancelled && timer.ms !== GAP_MS).map(timer => timer.ms).sort((a, b) => a - b)
+    expect(periods(true)).toEqual([POLL_MS, TICK_MS])
+    expect(periods(false)).toEqual([FOLLOW_MS, POLL_MS, TICK_MS])
   })
 
   test('a damaged record, no record and the same prompt again change nothing', async () => {

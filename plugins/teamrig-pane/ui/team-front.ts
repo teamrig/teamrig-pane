@@ -1,11 +1,12 @@
 // The dedicated UI's team: the register the dock binds at a session's start (hooks/register.tsx `bind`), on ports a
 // process gives instead of the engine's `$`. It finds the team as the dock does (places.ts), reads the tasks, inbox,
-// sessions and settings through `teamrig read` (document-source.ts) every POLL_MS (live.ts), and writes each snapshot
-// to the store, which draws it. teamrig starts the UI as `node <entry> --team <team> [--session <id>]` with its CLI's
+// sessions and settings through `teamrig read` (document-source.ts) at the refresher's tick (refresher.ts; the UI
+// follows no event stream yet), and writes each snapshot to the store, which draws it. teamrig starts the UI as `node <entry> --team <team> [--session <id>]` with its CLI's
 // script and its Node.js in the environment (teamrig's src/ui/start.ts), so the UI calls back the teamrig that
 // started it. It is not a Claude Code conversation: the area it draws is the `--session` named, else the
 // environment's TEAMRIG_SESSION, else the session the person last typed in (last-typed.ts, T5101), else the one
 // teamrig finds for the asker. Runs the CLI and reads files only.
+import { NO_FEED } from '../hooks/change-feed'
 import { SESSION_NAME } from '../hooks/core/read/index'
 import { TaskDetails, type RefPlaces } from '../hooks/details'
 import { DocumentSource } from '../hooks/document-source'
@@ -15,6 +16,8 @@ import type { PaneStore } from '../hooks/pane-store'
 import { findPlaces, kitHomeOf, TEAMRIG_ENV, type Places, type PlacesEnv } from '../hooks/places'
 import type { ReadsFile } from '../hooks/presses'
 import { RefFileReader } from '../hooks/ref-file'
+import { Refresher } from '../hooks/refresher'
+import { FollowedAsker, registerSubject, type HeldDocuments } from '../hooks/register-subject'
 import { registerPaths, TaskRegisterSource, type Files } from '../hooks/source'
 import { findTeamrigCli, UI_LOOKUPS, type CliFiles, type CliRun, type TeamrigCli } from '../hooks/teamrig-cli'
 import { TreeGoals } from '../hooks/tree-goals'
@@ -137,6 +140,7 @@ export const NO_TEAM_PROBLEM = `no team here: run teamrig ui in a teamrig team's
 export class TeamFront {
   readonly #deps: TeamFrontDeps
   #live: LiveRegister | null = null
+  #refresher: Refresher | null = null
   #front: ((focus: Focus) => Front) | null = null
   #isStopped = false
   /** The team bound, null when none is found; what a record is compared with. */
@@ -174,6 +178,7 @@ export class TeamFront {
   /** Stops the reads; the runs under way are the process port's to stop. */
   stop(): void {
     this.#isStopped = true
+    this.#refresher?.stop()
     this.#live?.stop()
     this.#followTimer?.cancel()
     this.#followTimer = null
@@ -188,6 +193,8 @@ export class TeamFront {
       if (record === null || record.at === this.#seenAt || this.#isStopped) return
       this.#seenAt = record.at
       if (record.team !== this.#teamId) {
+        // The old team's refresher and register both stop, or its tick would go on reading the team left.
+        this.#refresher?.stop()
         this.#live?.stop()
         await this.#bind(record.team, record)
       } else if (record.session !== this.#pinned) {
@@ -222,8 +229,9 @@ export class TeamFront {
     this.#pinned = session
     // The pin is the session asked for or followed to, kept for this run alone: the UI has no `/teamrig-pane <area>`.
     let pinned: string | null = session
+    const { source, held } = sourceOf(places, cli, run, deps)
     const live = new LiveRegister({
-      source: sourceOf(places, cli, run, deps),
+      source,
       sessionId: () => Promise.resolve(UI_CONVERSATION),
       now: () => Promise.resolve(deps.now()),
       publish: async change => {
@@ -239,7 +247,14 @@ export class TeamFront {
     const under = readersFront(places, deps)
     this.#front = places.kind === 'found' ? withActs(under, { cli, run, store: deps.store, now: deps.now }) : () => under
     await live.refresh()
-    if (!this.#isStopped) live.startTimers(deps.every)
+    if (this.#isStopped) return
+    // The first read is awaited, so the program draws the team at once; the refresher's own first read then finds
+    // nothing moved. Its tick reads the register while no stream tells it when.
+    const asker = new FollowedAsker(held)
+    const refresher = new Refresher({ feed: NO_FEED, every: deps.every }, [registerSubject({ refresh: () => live.refresh(), documents: held, asker, refollow: () => refresher.refollow() })])
+    this.#refresher = refresher
+    live.startTick(deps.every)
+    refresher.start()
   }
 
   async #showProblem(problem: string): Promise<void> {
@@ -247,14 +262,26 @@ export class TeamFront {
   }
 }
 
-/** What answers the snapshot for `places`: `teamrig read` over the register's files, or the problem in its place. */
-function sourceOf(places: Places, cli: TeamrigCli, run: (argv: readonly string[], timeoutMs: number) => Promise<CliRun>, deps: TeamFrontDeps): LivePorts['source'] {
-  if (places.kind === 'unset') return { missing: NO_TEAM_PROBLEM }
-  if (places.kind === 'problem') return { missing: places.problem }
+/** Holds nothing: the source of a UI with no team to read. */
+const NOTHING_HELD: HeldDocuments = { heldRevision: () => null, asker: null }
+
+/**
+ * What answers the snapshot for `places`: `teamrig read` over the register's files, or the problem in its place;
+ * with what that reader holds, for the refresher to weigh.
+ */
+function sourceOf(
+  places: Places,
+  cli: TeamrigCli,
+  run: (argv: readonly string[], timeoutMs: number) => Promise<CliRun>,
+  deps: TeamFrontDeps,
+): { readonly source: LivePorts['source']; readonly held: HeldDocuments } {
+  if (places.kind === 'unset') return { source: { missing: NO_TEAM_PROBLEM }, held: NOTHING_HELD }
+  if (places.kind === 'problem') return { source: { missing: places.problem }, held: NOTHING_HELD }
   const paths = registerPaths(places.dirs)
   const { team } = places
   const files = new TaskRegisterSource(deps.files, paths, places.settings, team, new TreeGoals(deps.files, paths.goals, team))
-  return new DocumentSource(files, cli, { run })
+  const documents = new DocumentSource(files, cli, { run })
+  return { source: documents, held: documents }
 }
 
 /** The front's readers of a card's refs and goals and of a reference file, over the team's folders. */
