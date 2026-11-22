@@ -169,15 +169,17 @@ function inboxSession(team: Team, asker: string | null): string {
   return found.id
 }
 
-/** The documents this fake serves: every one the pane knows by name, which are interface 1.1's. */
-const SERVED_NAMES: readonly DocumentName[] = ['tasks', 'inbox', 'sessions', 'config', 'plan']
+/** The documents this fake folds from a register's files: every one the pane polls; a stats spec prints its own document. */
+type ServedName = Exclude<DocumentName, 'stats'>
 
-function isServedName(value: string): value is DocumentName {
+const SERVED_NAMES: readonly ServedName[] = ['tasks', 'inbox', 'sessions', 'config', 'plan']
+
+function isServedName(value: string): value is ServedName {
   return SERVED_NAMES.some(name => name === value)
 }
 
 /** What one document of a team says, without its envelope; the plan without its `at`, which the envelope's clock adds. */
-async function teamBody(name: DocumentName, disk: FakeDisk, team: Team, asked: Asked, now: number): Promise<JsonRecord> {
+async function teamBody(name: ServedName, disk: FakeDisk, team: Team, asked: Asked, now: number): Promise<JsonRecord> {
   switch (name) {
     case 'plan': {
       const fold = await foldOf(disk, team, null, asked.conversation, now)
@@ -209,7 +211,7 @@ async function teamBody(name: DocumentName, disk: FakeDisk, team: Team, asked: A
 }
 
 /** With no team only the `config` document is served: the machine's teams to join one of; any other refuses the run. */
-async function teamlessBody(name: DocumentName, disk: FakeDisk): Promise<JsonRecord> {
+async function teamlessBody(name: ServedName, disk: FakeDisk): Promise<JsonRecord> {
   if (name !== 'config') throw new Refusal(`no team here: ${name} needs one`)
   const kit = kitHomeOf(disk.env, disk.home)
   const teams = kit === null ? [] : teamIds(await disk.folders(`${kit}/teams`))
@@ -231,7 +233,7 @@ function heldOf(unless: string | null): ReadonlyMap<string, string> {
  * envelope. The plan comes as interface 1.5 serves it, with when it was judged and no `cuts`; its revision is taken
  * before that time is added, or every read of it would be a changed one.
  */
-function enveloped(name: DocumentName, body: JsonRecord, held: string | undefined, now: number): JsonRecord {
+function enveloped(name: ServedName, body: JsonRecord, held: string | undefined, now: number): JsonRecord {
   const revision = lineHash(JSON.stringify(body))
   const version = name === 'plan' ? '1.5' : name === 'tasks' ? '1.6' : '1.0'
   if (held === revision) return { interface: version, document: name, revision, unchanged: true }
