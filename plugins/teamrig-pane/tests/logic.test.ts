@@ -407,7 +407,7 @@ describe('view', () => {
     expect(sameView(base, { ...base, focus: { ...base.focus, expedite: { ...base.focus.expedite, ownerP1: false } } })).toBe(false)
     expect(sameView(base, { ...base, goals: { A1: { parent: null, rank: 1, slice: null } } })).toBe(false)
     expect(sameView(base, { ...base, spend: { spentPct: { T1: 0.2 }, likeMedians: [] } })).toBe(false)
-    const plan = { at: NOW, validUntil: null, week: null, tasks: [], finished: [] }
+    const plan = { at: NOW, validUntil: null, week: null, tasks: [], finished: [], ownerCards: null }
     expect(sameView(base, { ...base, plan })).toBe(false)
     expect(sameView({ ...base, plan }, { ...base, plan: { ...plan } })).toBe(true)
     expect(sameView({ ...base, plan }, { ...base, plan: { ...plan, week: '2026-W42' } })).toBe(false)

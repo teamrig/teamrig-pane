@@ -513,7 +513,7 @@ function plannedIds(snapshot: Snapshot): string[] | null {
 
 describe('DocumentSource: the plan', () => {
   test('a snapshot carries the plan last read, never one of the file fold', async () => {
-    const { source } = rig({ ...BASE, plan: { at: NOW, validUntil: null, week: null, tasks: [], finished: [{ id: 'T9', workClass: 'Roadmap' }] } })
+    const { source } = rig({ ...BASE, plan: { at: NOW, validUntil: null, week: null, tasks: [], finished: [{ id: 'T9', workClass: 'Roadmap' }], ownerCards: null } })
     const snapshot = await drawn(source)
     expect(plannedIds(snapshot)).toEqual(['T1'])
     expect(snapshot.plan?.finished).toEqual([])
