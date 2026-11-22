@@ -142,6 +142,18 @@ describe('spawnFeed', () => {
     expect(heard).toEqual(['hello tasks@r1,inbox@i1', 'changed tasks@r2'])
   })
 
+  test('a stdout line that is no frame is told as a problem, and the frames around it are still read', async () => {
+    const { children, heard, follow } = rig()
+    follow(['tasks'])
+    await settle()
+    children[0]?.write(HELLO + 'not a frame\n' + CHANGED)
+    await settle()
+    expect(heard).toHaveLength(3)
+    expect(heard[0]).toBe('hello tasks@r1,inbox@i1')
+    expect(heard[1]?.startsWith('problem ')).toBe(true)
+    expect(heard[2]).toBe('changed tasks@r2')
+  })
+
   test('a stream that said hello and then ended is ended, whatever its code', async () => {
     const { children, heard, follow } = rig()
     follow(['tasks'])
