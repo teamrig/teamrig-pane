@@ -12,7 +12,7 @@
 // a plan the clock alone turned has a new revision here, where teamrig's covers the files only.
 import { indexMarks, inboxLines, parseConfigText, readHiringLog, readMarks, readRenames, Roster, unreadOf, type KitConfig } from '../hooks/core/read/index'
 import { lineHash } from '../hooks/line-hash'
-import { findPlaces, kitHomeOf, teamIds, teamStateDir, type PlacesInput, type TeamFiles } from '../hooks/places'
+import { findPlaces, kitHomeOf, TEAMRIG_ENV, teamIds, teamStateDir, type PlacesInput, type TeamFiles } from '../hooks/places'
 import type { DocumentName, JsonRecord } from '../hooks/read-document'
 import { LayoutRegister, registerPaths, TaskRegisterSource, type Files, type RegisterDirs } from '../hooks/source'
 import type { CliRun } from '../hooks/teamrig-cli'
@@ -239,6 +239,17 @@ function enveloped(name: DocumentName, body: JsonRecord, held: string | undefine
   return { interface: version, document: name, revision, problems: [], ...body, cuts: [] }
 }
 
+/** The team `--team` names, as teamrig takes it on every command; null when the run names none. */
+function teamNamed(argv: readonly string[]): string | null {
+  const at = argv.indexOf('--team')
+  return at < 0 ? null : (argv[at + 1] ?? null)
+}
+
+/** `disk` as teamrig searches it for a run: the team `--team` names over the one its folder and variables give. */
+function diskFor(disk: FakeDisk, team: string | null): FakeDisk {
+  return team === null ? disk : { ...disk, env: { ...disk.env, [TEAMRIG_ENV.team]: team } }
+}
+
 async function answer(disk: FakeDisk, asked: Asked, now: number): Promise<CliRun> {
   const names = asked.documents.filter(isServedName)
   if (names.length === 0 || names.length !== asked.documents.length) throw new Refusal(`read serves ${SERVED_NAMES.join(', ')}`)
@@ -255,14 +266,14 @@ async function answer(disk: FakeDisk, asked: Asked, now: number): Promise<CliRun
 }
 
 /**
- * A teamrig answering `read <documents> --json [--unless ...] [--session ...] [--conversation ...]` from the files
- * of `disk` at `now()`: a line per document asked, or, as teamrig does, nothing but a `REFUSED` line when any of
- * them cannot be served.
+ * A teamrig answering `read <documents> --json [--unless ...] [--session ...] [--conversation ...] [--team ...]`
+ * from the files of `disk` at `now()`: a line per document asked, or, as teamrig does, nothing but a `REFUSED` line
+ * when any of them cannot be served.
  */
 export function fakeRead(disk: FakeDisk, now: () => number): FakeRead {
   return async argv => {
     try {
-      return await answer(disk, askedOf(argv), now())
+      return await answer(diskFor(disk, teamNamed(argv)), askedOf(argv), now())
     } catch (error) {
       if (error instanceof Refusal) return refused(error.message)
       throw error
