@@ -14,8 +14,14 @@ import { messageOf } from './errors'
 
 export type SpawnChunk = { readonly stream: 'stdout' | 'stderr'; readonly text: string }
 export type SpawnEnd = { readonly code: number | null; readonly signal: string | null }
-/** A child's output as `$.process.spawn` streams it: the pieces, then how it ended. */
-export type SpawnStream = AsyncGenerator<SpawnChunk, SpawnEnd>
+/**
+ * A child's output as `$.process.spawn` streams it: the pieces, then how it ended. Only the two calls the feed makes:
+ * the engine's async generator is one, and a test's fake needs no generator to patch.
+ */
+export type SpawnStream = {
+  next: () => Promise<IteratorResult<SpawnChunk, SpawnEnd>>
+  return: (value: SpawnEnd) => Promise<IteratorResult<SpawnChunk, SpawnEnd>>
+}
 
 export type SpawnFeedPorts = {
   /** Starts `argv` with no shell, as `$.process.spawn`; the first pull rejects when it cannot start. */
