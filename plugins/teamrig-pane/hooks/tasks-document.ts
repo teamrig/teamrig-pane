@@ -15,7 +15,7 @@ import { isRecord, type ReadDocument } from './read-document'
 
 // Each list is typed by the contract's own union, so a status, verdict or type the contract gains or drops fails the
 // typecheck here until the list follows.
-const STATUSES: Readonly<Record<TaskStatus, true>> = { open: true, 'in-progress': true, verifying: true, waiting: true, done: true, dropped: true }
+export const STATUSES: Readonly<Record<TaskStatus, true>> = { open: true, 'in-progress': true, verifying: true, waiting: true, done: true, dropped: true }
 const VERDICTS: Readonly<Record<AnswerRow['verdict'], true>> = { approved: true, declined: true }
 const TYPES: Readonly<Record<NonNullable<TaskRow['type']>, true>> = { task: true, bug: true }
 
