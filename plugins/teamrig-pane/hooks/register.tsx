@@ -46,8 +46,12 @@ import type {
 import { claudeCodeCheck, claudeCodeOldLine } from './claude-code-version'
 import { ARGUMENT_HINT, COMMAND, inlineReason, KEYS_WORDS, parsePaneArgs, TIE_HINT } from './command'
 import { bounded } from './bounded-run'
+import { NO_FEED } from './change-feed'
 import { DocumentSource } from './document-source'
 import { LiveRegister, pinKey, type LivePorts } from './live'
+import { Refresher } from './refresher'
+import { FollowedAsker, refollowIfMoved, registerSubject, type HeldDocuments } from './register-subject'
+import { spawnFeed } from './spawn-feed'
 import {
   AT_LOG_LIST,
   INITIAL_STATE,
@@ -416,6 +420,10 @@ const NO_TEAM_LOOKUP = (word: string): SessionFound => lookupSession(word, null,
 
 export const register: Register = on => {
   let live: LiveRegister | null = null
+  /** Says when the register reads again, from teamrig's event stream or its tick (refresher.ts); set when the register is bound. */
+  let refresher: Refresher | null = null
+  /** Pins the register to an area, then follows the stream as it if the source now asks as another; set when the register is bound. */
+  let pinning: { pin(area: string | null): Promise<void> } | null = null
   /**
    * The session `/teamrig-pane <session>` names with its word, looked up in the team's sessions document as last read
    * (session-roster.ts); set when the session starts, the word itself with no team.
@@ -473,6 +481,7 @@ export const register: Register = on => {
       argumentHint: ARGUMENT_HINT,
     })
     live?.stop()
+    refresher?.stop()
     tracked?.stop()
     logging?.stop()
     recalling?.stop()
@@ -538,6 +547,7 @@ export const register: Register = on => {
      */
     const bind = async (places: Exclude<Places, { kind: 'unset' }>): Promise<void> => {
       live?.stop()
+      refresher?.stop()
       logging?.stop()
       recalling?.stop()
       teaming?.stop()
@@ -550,6 +560,7 @@ export const register: Register = on => {
       // register's files beneath it feeds only what the documents do not serve yet.
       let source: LivePorts['source']
       let sessionsRead: () => SessionsRead | null = () => null
+      let held: HeldDocuments = { heldRevision: () => null, asker: null }
       if (places.kind === 'found') {
         const paths = registerPaths(places.dirs)
         const { team } = places
@@ -559,6 +570,7 @@ export const register: Register = on => {
           { run: (argv, timeoutMs) => run(argv, { cwd: e.cwd, timeoutMs }) },
         )
         source = documents
+        held = documents
         sessionsRead = () => documents.sessionsRead
         lookUp =word => lookupSession(word, team.team, documents.sessionsRead)
       } else {
@@ -586,6 +598,18 @@ export const register: Register = on => {
           area === null ? $.store.delete(pinKey(claudeSession)) : $.store.set(pinKey(claudeSession), area),
       })
       live = started
+      // The register reads again when teamrig's event stream marks a document it draws, else at the refresher's
+      // tick. The follower runs the CLI the reads do, as whoever they last asked as, in the tab's folder.
+      const asker = new FollowedAsker(held)
+      const feed = 'missing' in source ? NO_FEED : spawnFeed({ spawn: request => $.process.spawn({ ...request, cwd: e.cwd }), cli: () => Promise.resolve(cli), asker: () => asker.take() })
+      const follows = new Refresher({ feed, every: (ms, fn) => $.clock.every(ms, fn) }, [registerSubject({ refresh: () => started.refresh(), documents: held, asker, refollow: () => follows.refollow() })])
+      refresher = follows
+      pinning = {
+        pin: async area => {
+          await started.pin(area)
+          refollowIfMoved({ asker, refollow: () => follows.refollow() })
+        },
+      }
       const turnLog = teamFiles === null ? null : teamFiles.turnLog
       const logLive =
         turnLog === null
@@ -708,8 +732,10 @@ export const register: Register = on => {
               },
               focus: key => focusOn($, key),
             })
+      // The first draw is awaited; the refresher's own first read then finds nothing moved and runs no CLI.
       await started.refresh()
-      started.startTimers((ms, fn) => $.clock.every(ms, fn))
+      started.startTick((ms, fn) => $.clock.every(ms, fn))
+      follows.start()
       logLive?.startTimers((ms, fn) => $.clock.every(ms, fn))
       previousLive?.startTimers((ms, fn) => $.clock.every(ms, fn))
       teamLive?.startTimers((ms, fn) => $.clock.every(ms, fn))
@@ -793,6 +819,8 @@ export const register: Register = on => {
       // Nothing to read until a team or a register is named here: the tasks view shows how to set the project up,
       // and the watch looks again at each poll and binds the register it finds.
       live = null
+      refresher = null
+      pinning = null
       lookUp = NO_TEAM_LOOKUP
       details = null
       refFiles = null
@@ -845,10 +873,10 @@ export const register: Register = on => {
       // A word that names no session is answered, and neither pins nor opens the pane.
       const found = lookUp(command.word)
       if (!found.ok) return { text: found.problem }
-      await live?.pin(found.id)
+      await pinning?.pin(found.id)
     }
     if (command.kind === 'mode') await showMode(atomStore($), command.mode)
-    if (command.kind === 'auto') await live?.pin(null)
+    if (command.kind === 'auto') await pinning?.pin(null)
     await sizer?.set('open')
     await $.ui.open({ id: PANE, title, columns: DOCK_COLUMNS })
     const reason = inlineReason(e.presentation)
@@ -981,7 +1009,7 @@ export const register: Register = on => {
       lives: livesNow(),
       logging,
       diffing,
-      pinning: live,
+      pinning,
       scheduling,
       pressing,
       acting,
