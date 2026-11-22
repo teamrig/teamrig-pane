@@ -447,6 +447,12 @@ export type StatsChoice =
   | { readonly kind: 'session'; readonly team: string; readonly session: string }
 
 /**
+ * The scope a Stats view folds (hooks/stats-source.ts scopeIn): the pane's team or a team above it, or one session's
+ * tasks in its team. A pick of the whole tree folds as the pane's team, since teamrig serves stats a team at a time.
+ */
+export type StatsScope = Exclude<StatsChoice, { readonly kind: 'tree' }>
+
+/**
  * teamrig's stats fold less the tasks behind its counts (core register/stats.ts RegisterStats.tasks) and behind each
  * goal (GoalProgress.tasks) and each area's cell (AreaCell.tasks): the view keeps only the list a press opened and
  * each goal's tasks, as slim rows (StatsListRow), never the register's tasks, which are heavy.
@@ -520,8 +526,8 @@ export type StatsList =
   | { readonly kind: 'area'; readonly area: StatsAreaPick; readonly rows: readonly StatsListRow[] }
 
 /**
- * The Stats tab's numbers (hooks/stats-source.ts): the scope they fold, a team no longer in the tree folded as the
- * tree; the range; the tree's teams, root first and depth first, for the scope presses; teamrig's stats fold and its
+ * The Stats tab's numbers (hooks/stats-source.ts): the scope they fold, the tree or a team not above the pane's
+ * folded as the pane's team; the range; the pane's team and the teams above it, root first, for the scope presses; teamrig's stats fold and its
  * Health tiles; the tasks behind the count a tile's press picked, null while none is; the scope's week, its teams'
  * week files summed (hooks/team.ts weekOf), null for none this week; and the team folders and registers whose read
  * failed. Or that it is not read yet, that the pane's team has no config teamrig takes, or why the team folders could
@@ -530,7 +536,7 @@ export type StatsList =
 export type StatsView =
   | {
       readonly kind: 'stats'
-      readonly scope: StatsChoice
+      readonly scope: StatsScope
       readonly range: import('../hooks/core/read/index').StatsRange
       readonly teams: readonly string[]
       readonly stats: StatsNumbers

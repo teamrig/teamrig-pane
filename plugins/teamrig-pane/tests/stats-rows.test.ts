@@ -42,7 +42,7 @@ type Folded = Extract<StatsView, { kind: 'stats' }>
 
 /** The tab's numbers for the tree of acme and tools, the 7 days, no week and no failure, unless `over` sets them. */
 function viewOf(over: Partial<Folded> = {}): Folded {
-  return { kind: 'stats', scope: { kind: 'tree' }, range: '7d', teams: ['acme', 'tools'], stats: BASE, health: HEALTH, list: null, week: null, failures: [], ...over }
+  return { kind: 'stats', scope: { kind: 'team', team: 'acme' }, range: '7d', teams: ['acme', 'tools'], stats: BASE, health: HEALTH, list: null, week: null, failures: [], ...over }
 }
 
 /** An October day: what opened and closed on it, five tasks open at its end. */
@@ -122,16 +122,16 @@ describe('statsBlocks: no numbers', () => {
 })
 
 describe('statsBlocks: the pick rows', () => {
-  test('bracket the tree and make each team a press that scopes the tab to it', () => {
+  test('bracket the scoped team, offer no whole tree, and make each other team a press that scopes the tab to it', () => {
     const [scope] = blockOf(statsBlocks(viewOf(), [], WIDE, OWN), 'stats:pick').rows
     if (scope === undefined) throw new Error('no scope row')
-    expect(lineOf(scope)).toBe('Scope  [tree]  acme  tools')
-    expect(spanOf(scope, '[tree]').stats).toBeUndefined()
+    expect(lineOf(scope)).toBe('Scope  [acme]  tools')
+    expect(spanOf(scope, '[acme]').stats).toBeUndefined()
     expect(spanOf(scope, 'tools').stats).toEqual({ kind: 'scope', scope: { kind: 'team', team: 'tools' } })
   })
 
   test('bold the label and draw each press in plain text, so a press does not read as a dim note', () => {
-    const [scope, range] = blockOf(statsBlocks(viewOf(), [], WIDE, OWN), 'stats:pick').rows
+    const [scope, range] = blockOf(statsBlocks(viewOf({ scope: { kind: 'team', team: 'tools' } }), [], WIDE, OWN), 'stats:pick').rows
     if (scope === undefined || range === undefined) throw new Error('no pick rows')
     expect(spanOf(scope, 'Scope')).toEqual({ text: 'Scope', bold: true })
     expect(spanOf(range, 'Range')).toEqual({ text: 'Range', bold: true })
@@ -142,9 +142,8 @@ describe('statsBlocks: the pick rows', () => {
   test("add a picked session, its press going back to the session's team", () => {
     const [scope] = blockOf(statsBlocks(viewOf({ scope: { kind: 'session', team: 'tools', session: 'dev' } }), [], WIDE, OWN), 'stats:pick').rows
     if (scope === undefined) throw new Error('no scope row')
-    expect(lineOf(scope)).toBe('Scope  tree  acme  tools  [dev ×]')
+    expect(lineOf(scope)).toBe('Scope  acme  tools  [dev ×]')
     expect(spanOf(scope, '[dev ×]').stats).toEqual({ kind: 'scope', scope: { kind: 'team', team: 'tools' } })
-    expect(spanOf(scope, 'tree').stats).toEqual({ kind: 'scope', scope: { kind: 'tree' } })
   })
 
   test('bracket the range and make each other range a press', () => {
@@ -260,16 +259,16 @@ describe("statsBlocks: a Health count's tasks", () => {
   test("take the numbers' place: the WARN lines, the dim line saying what it holds, then its tasks in the order given", () => {
     const blocks = statsBlocks(viewOf({ list: closed, failures: [{ team: 'tools', reason: 'EPERM.', isLastRead: true }] }), [], WIDE, OWN)
     expect(blocks.map(block => block.key)).toEqual(['stats:failure:tools', 'stats:list', 'stats:list:acme/T1', 'stats:list:tools/T9', 'stats:list:acme/T5'])
-    expect(blockOf(blocks, 'stats:list').rows.map(row => row.spans)).toEqual([[{ text: 'The tasks in the tree closed in the last 7 d, p1 first, then by due date.', dim: true }]])
+    expect(blockOf(blocks, 'stats:list').rows.map(row => row.spans)).toEqual([[{ text: 'The tasks in acme closed in the last 7 d, p1 first, then by due date.', dim: true }]])
   })
 
   test('say what each count holds in the scope, the range for the opened and closed ones, and their order', () => {
-    expect(whatOf('active', { range: '90d' })).toEqual(['The active tasks in the tree, p1 first, then by due date.'])
-    expect(whatOf('opened', { scope: { kind: 'team', team: 'tools' }, range: 'all' })).toEqual(['The tasks in tools and the teams under it opened ever, p1 first, then by due date.'])
-    expect(whatOf('closed', { range: '30d' })).toEqual(['The tasks in the tree closed in the last 30 d, p1 first, then by due date.'])
+    expect(whatOf('active', { range: '90d' })).toEqual(['The active tasks in acme, p1 first, then by due date.'])
+    expect(whatOf('opened', { scope: { kind: 'team', team: 'tools' }, range: 'all' })).toEqual(['The tasks in tools opened ever, p1 first, then by due date.'])
+    expect(whatOf('closed', { range: '30d' })).toEqual(['The tasks in acme closed in the last 30 d, p1 first, then by due date.'])
     expect(whatOf('overdue', { scope: { kind: 'session', team: 'tools', session: 'dev' } })).toEqual(['The active tasks of dev in tools past their due date, p1 first, then by due date.'])
-    expect(whatOf('overdueP1')).toEqual(['The active p1 tasks in the tree past their due date, by due date.'])
-    expect(whatOf('ownerDecisions')).toEqual(['The tasks in the tree waiting on the owner, the oldest wait first.'])
+    expect(whatOf('overdueP1')).toEqual(['The active p1 tasks in acme past their due date, by due date.'])
+    expect(whatOf('ownerDecisions')).toEqual(['The tasks in acme waiting on the owner, the oldest wait first.'])
   })
 
   test("draw each task's title row over a dim meta line: owner, priority, own due on the team's clock, and a peer team's name", () => {
@@ -292,7 +291,7 @@ describe("statsBlocks: a Health count's tasks", () => {
 
   test('say so when the count holds no tasks', () => {
     expect(statsBlocks(viewOf({ list: { kind: 'overdue', rows: [] } }), [], WIDE, OWN).map(block => block.rows.map(lineOf))).toEqual([
-      ['The active tasks in the tree past their due date, p1 first, then by due date.'],
+      ['The active tasks in acme past their due date, p1 first, then by due date.'],
       ['No tasks.'],
     ])
   })
@@ -415,14 +414,13 @@ describe('statsBlocks: Flow', () => {
     expect(flowCard(viewOf({ stats })).filter(row => row.key.endsWith(':gap')).map(row => row.spans)).toEqual([[], [], [], []])
   })
 
-  test("marks a split in the range on a team's scope, never on the tree's or before the range", () => {
+  test('marks a split in the range, never one before it', () => {
     const split = { day: '2026-10-28', from: 'acme', to: 'tools', tasks: 412 }
     const early = { day: '2026-10-01', from: 'acme', to: 'tools', tasks: 2 }
     const splits: StatsNumbers = { ...stats, splits: [early, split] }
     const card = flowCard(viewOf({ stats: splits, scope: { kind: 'team', team: 'tools' } }))
     expect(card.filter(row => row.key.includes(':split:')).map(lineOf)).toEqual(['  before 10-28: tree only, 412 tasks moved acme -> tools'])
     expect(card.slice(0, 2).map(row => row.key)).toEqual([`${FLOW_KEY}:split:0`, `${FLOW_KEY}:active:gap`])
-    expect(flowCard(viewOf({ stats: splits })).some(row => row.key.includes(':split:'))).toBe(false)
   })
 
   test('dayLabel reads a day as its weekday and month-day', () => {
