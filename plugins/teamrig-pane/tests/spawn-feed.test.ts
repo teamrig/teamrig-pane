@@ -24,15 +24,18 @@ class ScriptedChild {
 
   constructor(argv: readonly string[]) {
     this.argv = argv
+    // A plain object over the generator, so no generator's own `return` is assigned: under the engine runner that
+    // assignment threw and no child was ever recorded.
     const generator = this.body()
-    const returnOf = generator.return.bind(generator)
-    generator.return = (value: SpawnEnd | PromiseLike<SpawnEnd>) => {
-      this.returns += 1
-      // A real stream's return kills the child, which ends the pull it waits on: the script ends it the same way.
-      this.end({ code: null, signal: null })
-      return returnOf(value)
+    this.stream = {
+      next: () => generator.next(),
+      return: (value: SpawnEnd) => {
+        this.returns += 1
+        // A real stream's return kills the child, which ends the pull it waits on: the script ends it the same way.
+        this.end({ code: null, signal: null })
+        return generator.return(value)
+      },
     }
-    this.stream = generator
   }
 
   write(text: string, stream: 'stdout' | 'stderr' = 'stdout'): void {
