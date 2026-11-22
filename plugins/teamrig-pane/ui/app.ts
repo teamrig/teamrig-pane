@@ -10,7 +10,6 @@ import { revealed, WHEEL_ROWS, type View } from '../hooks/frame'
 import { headOf, type Head } from '../hooks/head'
 import type { Drawn } from '../hooks/layout'
 import { currentPlace } from '../hooks/nav'
-import type { PaneStore } from '../hooks/pane-store'
 import { runPress, submitFind, typeFind, type PressDeps } from '../hooks/press'
 import { placeOf } from '../hooks/press-keys'
 import type { NoteField } from '../hooks/rows'
@@ -23,7 +22,7 @@ import { FIND_KEY, type Typing } from './paint-head'
 import { backHit, findRowOf, hitAt, hitOf, hotkeyHit, noteFieldOf, ringOrder, stepped } from './ring'
 import type { Stop } from './row'
 import type { Terminal } from './terminal'
-import { watched } from './watched-store'
+import type { ObservedStore } from './watched-store'
 
 /** Moves the focus ring onto the stop keyed `key`. */
 export type Focus = (key: string) => Promise<void>
@@ -41,7 +40,8 @@ export type Front = { readonly ports: Ports; readonly noting: Noting | null }
 export type FrontLook = Pick<ScreenLook, 'noteHold' | 'wraps' | 'hostOld' | 'tieHint' | 'keys'>
 
 export type AppDeps = {
-  readonly store: PaneStore
+  /** The one store every writer is handed, the app's front too: each changing write asks for a drawing. */
+  readonly store: ObservedStore
   readonly terminal: Terminal
   /**
    * The ports as they stand, asked at each drawing and each press, so one that comes late is used from then. `focus`
@@ -66,9 +66,11 @@ type Field = Typing & { readonly note: NoteField | null }
 
 class App {
   readonly #deps: AppDeps
-  readonly #store: PaneStore
+  readonly #store: ObservedStore
   readonly #redraw: () => void
   readonly #ended: (error: unknown) => void
+  /** Stops the store telling this app of its writes, once it has started. */
+  #unwatch: () => void = () => undefined
   #memo: KeysMemo = FIRST_MEMO
   #settled: Settled | null = null
   #ring: string | null = null
@@ -88,11 +90,12 @@ class App {
       deps.defer,
       error => this.#end(error),
     )
-    this.#store = watched(deps.store, () => this.#ask())
+    this.#store = deps.store
   }
 
   start(): void {
     const { terminal } = this.#deps
+    this.#unwatch = this.#store.onChange(() => this.#ask())
     terminal.onKey(key => {
       this.#queued(async () => {
         await this.#answer(key)
@@ -119,6 +122,7 @@ class App {
   #end(error: unknown): void {
     if (this.#isOver) return
     this.#isOver = true
+    this.#unwatch()
     this.#deps.terminal.close()
     this.#ended(error)
   }

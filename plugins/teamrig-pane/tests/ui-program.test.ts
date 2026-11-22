@@ -10,6 +10,7 @@ import type { AppDeps } from '../ui/app'
 import { keysHint } from '../hooks/find-field'
 import { FAILED_CODE, NO_TEAM_FRONT, OWN_KEYS, ownLook, QUIT_CODE, runProgram, SIGNAL_CODES, type Signal } from '../ui/program'
 import { ENTER, LEAVE, type Input, type Output } from '../ui/terminal'
+import { WatchedStore } from '../ui/watched-store'
 import { HOUR, NOW, createLine } from './fixtures'
 
 const ESC = '\u001b'
@@ -19,7 +20,7 @@ const FRAME = `${ESC}[H`
 type Rig = {
   /** What happened outside the program, in order: `enter`, `frame`, `leave`, `pause`, `ending`, `complain <text>`. */
   readonly log: string[]
-  readonly store: MemoryStore
+  readonly store: WatchedStore
   readonly code: Promise<number>
   send(chunk: string): void
   signal(signal: Signal): void
@@ -45,7 +46,7 @@ function wrote(text: string): string {
 
 function rig(options: RigOptions = {}): Rig {
   const log: string[] = []
-  const store = new MemoryStore(INITIAL_STATE)
+  const store = new WatchedStore(new MemoryStore(INITIAL_STATE))
   let onData: ((chunk: string) => void)[] = []
   let onSignal: { readonly signal: Signal; readonly listener: () => void }[] = []
   const input: Input = {
