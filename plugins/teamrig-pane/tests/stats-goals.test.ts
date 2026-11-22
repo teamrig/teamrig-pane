@@ -60,7 +60,7 @@ const GOALS = [LATE, ON_TRACK, AT_RISK, DONE]
 
 function viewOf(over: Partial<StatsGoals> = {}): Folded {
   const stats = { ...TALLIES, goals: { today: TODAY, offGoal: 750, doneInRange: 774, goals: GOALS, ...over }, areas: slimAreas(areas, () => []).areas }
-  return { kind: 'stats', scope: { kind: 'tree' }, range: '7d', teams: ['acme'], stats, health: HEALTH, list: null, week: null, failures: [] }
+  return { kind: 'stats', scope: { kind: 'team', team: 'acme' }, range: '7d', teams: ['acme'], stats, health: HEALTH, list: null, week: null, failures: [] }
 }
 
 const lineOf = (row: Row): string => row.spans.map(span => span.text).join('')

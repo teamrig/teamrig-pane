@@ -107,7 +107,7 @@ const EMPTY: StatsNumbers = {
 
 /** The numbers of the tree of acme and tools over the 7 days, unless `over` sets them. */
 function viewOf(over: Partial<Folded> = {}): Folded {
-  return { kind: 'stats', scope: { kind: 'tree' }, range: '7d', teams: ['acme', 'tools'], stats: STATS, health: HEALTH, list: null, week: null, failures: [], ...over }
+  return { kind: 'stats', scope: { kind: 'team', team: 'acme' }, range: '7d', teams: ['acme', 'tools'], stats: STATS, health: HEALTH, list: null, week: null, failures: [], ...over }
 }
 
 const lineOf = (row: Row): string => row.spans.map(span => span.text).join('')

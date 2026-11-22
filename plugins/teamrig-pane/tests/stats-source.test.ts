@@ -5,7 +5,7 @@
 // a read reads again after it; a failed run or an unreadable document drawn as last read with why, before any read a
 // failed view (T4759).
 import { describe, expect, test } from 'claude-code/testing'
-import type { StatsChoice, StatsView } from '../types'
+import type { StatsChoice, StatsScope, StatsView } from '../types'
 import { POLL_MS } from '../hooks/live'
 import { parseDocument, type JsonRecord } from '../hooks/read-document'
 import type { SessionsRead } from '../hooks/sessions-document'
@@ -50,7 +50,7 @@ function readOf(document: JsonRecord, team: string): StatsRead {
 }
 
 /** The view of `document` read for `scope` over `pick`. */
-function shown(document: JsonRecord, scope: Exclude<StatsChoice, { kind: 'tree' }>, pick: StatsPick, over: Partial<Extract<StatsView, { kind: 'stats' }>> = {}): StatsView {
+function shown(document: JsonRecord, scope: StatsScope, pick: StatsPick, over: Partial<Extract<StatsView, { kind: 'stats' }>> = {}): StatsView {
   const read = readOf(document, scope.team)
   return { kind: 'stats', scope, range: pick.range, teams: ['acme', 'shop'], stats: read.stats, health: read.health, list: null, week: null, failures: [], ...over }
 }

@@ -13,7 +13,7 @@
 // out of them, as only the tree's are whole before it. After Flow the Bottlenecks, New work, Speed, Delays, Waits, Bugs
 // and People sections (stats-sections.ts, T1859, T1866), then the Goals section (stats-goals.ts, T1420), each closed by default. A team
 // folder the last read could not read is a WARN line. Pure.
-import type { StatsAreaPick, StatsChoice, StatsList, StatsListKind, StatsListRow, StatsNumbers, StatsView } from '../types'
+import type { StatsAreaPick, StatsList, StatsListKind, StatsListRow, StatsNumbers, StatsScope, StatsView } from '../types'
 import {
   AREA_MEASURE_LABELS,
   AREA_THRESHOLDS,
@@ -76,7 +76,7 @@ export type StatsOwn = { readonly team: string | null; readonly held: ReadonlySe
 
 /** Each list's title, as the tab's head names it. */
 const LIST_TITLES: Readonly<Record<StatsListKind, string>> = { active: 'Active', opened: 'Opened', closed: 'Closed', overdue: 'Overdue', overdueP1: 'Overdue p1', ownerDecisions: 'Owner decisions' }
-/** What each list holds, around the scope's words: `The tasks` + ` in the tree` + ` opened`. */
+/** What each list holds, around the scope's words: `The tasks` + ` in acme` + ` opened`. */
 const LIST_WORDS: Readonly<Record<StatsListKind, { readonly lead: string; readonly tail: string }>> = {
   active: { lead: 'The active tasks', tail: '' },
   opened: { lead: 'The tasks', tail: ' opened' },
@@ -123,12 +123,9 @@ function pickRow(key: string, label: string, choices: readonly Span[]): Row {
   return { key, spans: [{ text: label, bold: true }, ...choices.flatMap(choice => [{ text: PICK_GAP }, choice])], hang: { text: ' '.repeat(cells(label + PICK_GAP)) } }
 }
 
-/** The scope row: the tree and each of its teams; on a session's scope, the session too, its press back to its team. */
-function scopeRow(scope: StatsChoice, teams: readonly string[]): Row {
-  const choices = [
-    choiceSpan('tree', scope.kind === 'tree', { kind: 'scope', scope: { kind: 'tree' } }),
-    ...teams.map(team => choiceSpan(team, scope.kind === 'team' && scope.team === team, { kind: 'scope', scope: { kind: 'team', team } })),
-  ]
+/** The scope row: the pane's team and each team above it; on a session's scope, the session too, its press back to its team. */
+function scopeRow(scope: StatsScope, teams: readonly string[]): Row {
+  const choices = teams.map(team => choiceSpan(team, scope.kind === 'team' && scope.team === team, { kind: 'scope', scope: { kind: 'team', team } }))
   if (scope.kind === 'session') choices.push({ text: `[${scope.session} ×]`, color: 'accent', bold: true, stats: { kind: 'scope', scope: { kind: 'team', team: scope.team } } })
   return pickRow(`${VIEW}:scope`, 'Scope', choices)
 }
@@ -292,9 +289,8 @@ function dayRows(days: readonly StatsDay[], width: number): Row[] {
   return [{ key: `${key}:head`, spans: [INDENT, { text: head, dim: true }] }, ...rows, ...olderRows, ...limitRows]
 }
 
-/** On a team's or a session's scope, each split in the range: before it only the tree's charts hold the tasks it moved. */
-function splitRows(scope: StatsChoice, stats: StatsNumbers): Row[] {
-  if (scope.kind === 'tree') return []
+/** Each split in the range: before it only the whole tree's numbers hold the tasks it moved, and a view folds one team. */
+function splitRows(stats: StatsNumbers): Row[] {
   const first = stats.days[0]?.day ?? ''
   return stats.splits
     .filter(split => split.day >= first)
@@ -315,7 +311,7 @@ function flowRows(view: Folded, width: number): Row[] {
   const flowKey = `${FLOW_KEY}:cfd`
   const flowLegend = FLOW_LEGEND.flatMap((status, index): Span[] => [dim(index === 0 ? '  ' : ', '), { text: FLOW_GLYPH[status], ...FLOW_LOOK[status] }, dim(` ${STATUS_WORDS[status]}`)])
   return [
-    ...splitRows(view.scope, stats),
+    ...splitRows(stats),
     gapRow(activeKey),
     legendRow(activeKey, 'Active tasks', [dim(" at each day's end")]),
     ...chartRows(activeKey, activeChart(stats.days, room), LINE_LOOK),
@@ -372,12 +368,10 @@ function areaWhat(area: StatsAreaPick): string {
   return `${lead} ${where}${tail}, p1 first, then by due date.`
 }
 
-function scopeWords(scope: StatsChoice): string {
+function scopeWords(scope: StatsScope): string {
   switch (scope.kind) {
-    case 'tree':
-      return 'in the tree'
     case 'team':
-      return `in ${scope.team} and the teams under it`
+      return `in ${scope.team}`
     case 'session':
       return `of ${scope.session} in ${scope.team}`
   }

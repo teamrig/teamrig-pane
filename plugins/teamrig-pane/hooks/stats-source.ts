@@ -7,7 +7,7 @@
 // session or range asked moved. It writes the view only when it changed, reading every POLL_MS (live.ts) and only
 // while the tab shows; a press reads at once (refresh), and one made during a read runs another after it. A run that
 // fails, or a document that cannot be read, draws the numbers last read with why; before any read the view fails.
-import type { StatsChoice, StatsList, StatsListPick, StatsView, TeamFolderFailure } from '../types'
+import type { StatsChoice, StatsList, StatsListPick, StatsScope, StatsView, TeamFolderFailure } from '../types'
 import type { StatsRange } from './core/read/index'
 import { Held } from './held-document'
 import { POLL_MS, type Timer } from './live'
@@ -53,12 +53,12 @@ export function teamsOf(own: string, sessions: SessionsRead | null): string[] {
 }
 
 /** The scope as it is read: the tree, or a team no longer above the pane's, reads the pane's own team. */
-export function scopeIn(choice: StatsChoice, own: string, teams: readonly string[]): Exclude<StatsChoice, { kind: 'tree' }> {
+export function scopeIn(choice: StatsChoice, own: string, teams: readonly string[]): StatsScope {
   return choice.kind !== 'tree' && teams.includes(choice.team) ? choice : { kind: 'team', team: own }
 }
 
 /** The flags that read `scope` over `range`: `--team` only for a team above the pane's own, `--owner` for a session. */
-export function narrowingOf(scope: Exclude<StatsChoice, { kind: 'tree' }>, range: StatsRange, own: string): ReadNarrowing {
+export function narrowingOf(scope: StatsScope, range: StatsRange, own: string): ReadNarrowing {
   return {
     ...(scope.team === own ? {} : { team: scope.team }),
     ...(scope.kind === 'session' ? { owner: scope.session } : {}),

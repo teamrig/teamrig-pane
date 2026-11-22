@@ -9,7 +9,7 @@ import { slimAreas } from '../hooks/stats-areas'
 import { BOTTLENECK_ROWS, BOTTLENECKS_KEY, bottlenecksHead, bottlenecksRows } from '../hooks/stats-bottlenecks'
 import { goalsOf } from './stats-goals'
 import { cells } from '../hooks/width'
-import type { StatsArea, StatsAreaCell, StatsAreaGroup, StatsAreas, StatsChoice, StatsNumbers, StatsView } from '../types'
+import type { StatsArea, StatsAreaCell, StatsAreaGroup, StatsAreas, StatsNumbers, StatsScope, StatsView } from '../types'
 import { createLine, NOW } from './fixtures'
 
 const WIDE = 100
@@ -59,7 +59,7 @@ const SESSIONS: StatsAreaGroup = {
 const AREAS: StatsAreas = { teams: TEAMS, sessions: SESSIONS }
 const NONE: StatsAreaGroup = { median: { ...MEDIAN, active: 0 }, areas: [] }
 
-function viewOf(areas: StatsAreas = AREAS, scope: StatsChoice = { kind: 'tree' }): Folded {
+function viewOf(areas: StatsAreas = AREAS, scope: StatsScope = { kind: 'team', team: 'acme' }): Folded {
   return { kind: 'stats', scope, range: '7d', teams: ['acme', 'tools'], stats: { ...BASE, areas }, health: HEALTH, list: null, week: null, failures: [] }
 }
 
@@ -138,7 +138,8 @@ describe('bottlenecksRows: the tables', () => {
   })
 
   test("make each name a press that scopes the tab to it, but the tab's own scope", () => {
-    expect(spanOf(rowOf(rows, `${BOTTLENECKS_KEY}:teams:acme/`), 'acme').stats).toEqual({ kind: 'scope', scope: { kind: 'team', team: 'acme' } })
+    const tools = bottlenecksRows(viewOf(AREAS, { kind: 'team', team: 'tools' }), WIDE)
+    expect(spanOf(rowOf(tools, `${BOTTLENECKS_KEY}:teams:acme/`), 'acme').stats).toEqual({ kind: 'scope', scope: { kind: 'team', team: 'acme' } })
     expect(spanOf(rowOf(rows, `${BOTTLENECKS_KEY}:sessions:acme/api`), 'acme/api').stats).toEqual({ kind: 'scope', scope: { kind: 'session', team: 'acme', session: 'api' } })
     const own = bottlenecksRows(viewOf(AREAS, { kind: 'session', team: 'acme', session: 'api' }), WIDE)
     expect(spanOf(rowOf(own, `${BOTTLENECKS_KEY}:sessions:acme/api`), 'acme/api').stats).toBe(undefined)
