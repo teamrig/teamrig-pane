@@ -11,7 +11,9 @@ import type { CliRun } from '../hooks/teamrig-cli'
 import { cells } from '../hooks/width'
 import { machineZoneOf } from '../hooks/zone'
 import { EVENT_VERSION, type HireRecord, type RetireRecord } from '../hooks/core/read/index'
+import type { JsonRecord } from '../hooks/read-document'
 import { fakeRead, type FakeDisk } from './fake-read'
+import { askedOf, printed, statsAskedOf, statsDocument, statsTask, type StatsAsked } from './served-documents'
 import { HOUR, NOW, S1, S2, bigRegister, createLine, iso, markLine, statusLine, updateLine, verifyingLine, waitingLine } from './fixtures'
 import { hire, retire } from './team-fixtures'
 
@@ -183,6 +185,25 @@ type FakeRepos = {
   teamrig?: (args: readonly string[]) => string
   /** No teamrig installed: `start` writes no plugin list, so the pane finds no CLI and no `read` is answered. */
   isTeamrigMissing?: boolean
+  /**
+   * The `stats` document teamrig serves for how a `read stats` run narrowed it; unset, the disk answers that run as
+   * every other `read`, which refuses it: the fake folds no stats from a register's files.
+   */
+  stats?: (asked: StatsAsked) => JsonRecord
+}
+
+/**
+ * Serves the `stats` document of served-documents.ts over `tasks` (behind the active count), echoing the run's
+ * range and session so a press that re-asks draws what it asked; `over` sets any other field.
+ */
+function servedStats(tasks: readonly JsonRecord[] = [statsTask('T1')], over: JsonRecord = {}): (asked: StatsAsked) => JsonRecord {
+  return asked => statsDocument('s1', {
+    range: asked.range ?? '30d',
+    session: asked.owner,
+    tasks,
+    behind: { active: tasks.map(each => each['id']), opened: [], closed: [], overdue: [], overdueP1: [], ownerDecisions: [] },
+    ...over,
+  })
 }
 
 /** A `teamrig read` run in `cwd`, answered from the disk (fake-read.ts). */
@@ -275,7 +296,13 @@ async function start(
     machineZone: machineZoneOf(shownEnv['TZ'], 'UTC'),
   })
   const isInstalled = repos.isTeamrigMissing !== true
-  const { runs, readRuns } = fakeGit(on, repos, isInstalled ? (cwd, args) => fakeRead(besideIn(cwd), () => clock.now())(args) : null)
+  const servesStats = repos.stats
+  const read: ReadRun = async (cwd, args) => {
+    const documents = askedOf(args).documents
+    if (servesStats !== undefined && documents.length === 1 && documents[0] === 'stats') return printed(servesStats(statsAskedOf(args)))
+    return await fakeRead(besideIn(cwd), () => clock.now())(args)
+  }
+  const { runs, readRuns } = fakeGit(on, repos, isInstalled ? read : null)
   on('session.id', async () => ({ value: S1 }))
   on('session.version', async () => version)
   on('session.start', async ($, e) => ({ cwd: e.cwd }))
@@ -2180,7 +2207,7 @@ function hiringLine(record: HireRecord | RetireRecord): string {
  * and retired. Its child team tools, and another root team, other, another project's.
  */
 async function startWithTeam(on: On) {
-  const started = await start(on, {}, { roots: {}, statuses: {} }, { USERPROFILE: HOME })
+  const started = await start(on, {}, { roots: {}, statuses: {}, stats: servedStats() }, { USERPROFILE: HOME })
   started.disk.write('/work/.teamrig.json', [JSON.stringify({ team: 'acme' })])
   started.disk.write(`${TEAMS}/acme/config.json`, [
     JSON.stringify({ team: { id: 'acme' }, sessions: ['lead', 'web', 'api', 'ui'], roles: { lead: 'lead' }, leads: { web: ['api', 'ui'] } }),
@@ -3338,19 +3365,21 @@ test("the switch's Meetings button lists the team's meetings through the teamrig
   expect(buttonKeys(await pane.drawn()).filter(key => key.startsWith('meeting:M3:') && !key.startsWith('meeting:M3:card'))).toEqual([])
 })
 
-test("the switch's Stats button, key r, folds the tree's registers with no Find field; a press on a range or a team picks it and folds again", async ($, on) => {
-  // A session of team web, its pointer file in /work, its register holding T1.
-  const { disk } = await start(on, {}, { roots: {}, statuses: {} }, { USERPROFILE: HOME })
+/** The task teamrig's stats document of team web names in the specs below. */
+const PRICING_TASK = statsTask('T1', { title: { text: 'Ship the pricing page', source: 'team' }, owner: 'web' })
+
+test("the switch's Stats button, key r, draws teamrig's stats document of the pane's team with no Find field; a press on a range reads it over that range", async ($, on) => {
+  // A session of team web, its pointer file in /work; teamrig serves web's stats with T1 active.
+  const { disk, readRuns } = await start(on, {}, { roots: {}, statuses: {}, stats: servedStats([PRICING_TASK]) }, { USERPROFILE: HOME })
   disk.write('/work/.teamrig.json', [JSON.stringify({ team: 'web' })])
   disk.write('/Homes/tester/.teamrig/teams/web/config.json', ['{}'])
-  disk.write('/Homes/tester/.teamrig/teams/web/state/events.jsonl', [createLine('T1', { owner: 'web', by: 'lead', at: NOW - HOUR, title: 'Ship the pricing page' })])
   await $.session.start({ cwd: '/work', surface: 'terminal', isInteractive: true })
   const pane = await $.ui.mount({ plugin: 'teamrig-pane', surface: 'terminal', component: 'Pane', requestId: 'teamrig-pane', props: STATS_PROPS })
   expect(keyedProps(await pane.drawn(), 'stats')).toMatchObject({ label: 'Stats', hotkey: 'r', variant: 'secondary' })
 
   await pane.press({ key: 'stats' })
   expect(keyedProps(await pane.drawn(), 'stats')).toMatchObject({ variant: 'primary' })
-  expect(await drawsLine(pane, /^Scope {2}\[tree\] {2}web$/)).toBe(true)
+  expect(await drawsLine(pane, /^Scope {2}\[web\]$/)).toBe(true)
   expect(await drawsLine(pane, /^Range {2}\[7 d\] {2}30 d {2}90 d {2}180 d {2}1 y {2}all$/)).toBe(true)
   expect(keyedProps(await pane.drawn(), 'find')).toBeNull()
   expect(await drawsLine(pane, /^Health$/)).toBe(true)
@@ -3364,16 +3393,12 @@ test("the switch's Stats button, key r, folds the tree's registers with no Find 
   await pane.press({ key: rangeKey })
   expect(await drawsLine(pane, /^Range {2}7 d {2}30 d {2}90 d {2}180 d {2}\[1 y\] {2}all$/)).toBe(true)
   expect(await drawsLine(pane, /^▸ Flow · last 1 y · opened 1 · closed 0 · net \+1$/)).toBe(true)
-
-  const teamKey = buttonKeys(await pane.drawn()).find(key => key.startsWith('stats:team:web:'))
-  if (teamKey === undefined) throw new Error('no web press on the scope row')
-  await pane.press({ key: teamKey })
-  expect(await drawsLine(pane, /^Scope {2}tree {2}\[web\]$/)).toBe(true)
+  expect(readRuns.filter(run => run.startsWith('read stats')).at(-1)).toMatch(/ --range 1y\b/)
 })
 
 test("a press on a Health count lists its tasks under back and the trail `Stats › Active (1)`; back shows the numbers, a held task's row opens its page", async ($, on) => {
-  // A session of team web, its pointer file in /work, its register holding T1, open.
-  const { disk } = await start(on, {}, { roots: {}, statuses: {} }, { USERPROFILE: HOME })
+  // A session of team web, its pointer file in /work, its register holding T1, open, which teamrig's stats name.
+  const { disk } = await start(on, {}, { roots: {}, statuses: {}, stats: servedStats([PRICING_TASK]) }, { USERPROFILE: HOME })
   disk.write('/work/.teamrig.json', [JSON.stringify({ team: 'web' })])
   disk.write('/Homes/tester/.teamrig/teams/web/config.json', ['{}'])
   disk.write('/Homes/tester/.teamrig/teams/web/state/events.jsonl', [createLine('T1', { owner: 'web', by: 'lead', at: NOW - HOUR, title: 'Ship the pricing page' })])
@@ -3391,7 +3416,7 @@ test("a press on a Health count lists its tasks under back and the trail `Stats 
   await pressActive()
   expect(keyedProps(await pane.drawn(), 'back')).toMatchObject({ label: '‹ back', hotkey: 'b', variant: 'secondary' })
   expect(await pane.find({ type: 'Text', text: 'Stats › Active (1)' })).toMatchObject({ props: { wrap: 'truncate-end' } })
-  expect(await drawsLine(pane, /^The active tasks in the tree, p1 first, then by due date\.$/)).toBe(true)
+  expect(await drawsLine(pane, /^The active tasks in web, p1 first, then by due date\.$/)).toBe(true)
   expect(await drawsLine(pane, /^○ T1 {2}Ship the pricing page$/)).toBe(true)
   expect(await drawsLine(pane, /^Health$/)).toBe(false)
   expect(activeKey(buttonKeys(await pane.drawn()))).toBeUndefined()
@@ -3435,7 +3460,7 @@ test("[Stats] on a team's row opens the Stats tab on that team, on a session's o
 
   await pressRowStats(pane, 'team:acme')
   expect(keyedProps(await pane.drawn(), 'stats')).toMatchObject({ variant: 'primary' })
-  expect(await drawsLine(pane, /^Scope {2}tree {2}\[acme\]/)).toBe(true)
+  expect(await drawsLine(pane, /^Scope {2}\[acme\]/)).toBe(true)
   expect(keyedProps(await pane.drawn(), 'back')).toMatchObject({ label: '‹ back', hotkey: 'b', variant: 'secondary' })
   expect(await pane.find({ type: 'Text', text: 'Teams › Stats' })).toMatchObject({ props: { wrap: 'truncate-end' } })
 
@@ -3469,7 +3494,7 @@ test("the Stats switch button drops a Teams row's back, the tab staying on the r
   await pane.press({ key: 'stats' })
   expect(keyedProps(await pane.drawn(), 'back')).toBeNull()
   expect(await pane.find({ type: 'Text', text: 'Teams › Stats' })).toBeUndefined()
-  expect(await drawsLine(pane, /^Scope {2}tree {2}\[acme\]/)).toBe(true)
+  expect(await drawsLine(pane, /^Scope {2}\[acme\]/)).toBe(true)
 })
 
 test("a Health count's list opened under a Teams row's back keeps its own back first; a second back leaves for the Teams tab", async ($, on) => {
@@ -3499,14 +3524,19 @@ test("[Stats] on a Teams row shows the tab's numbers, never a Health count's lis
 })
 
 test('the six sections after Flow draw folded, each header alone answering; a press opens one, and a name in People scopes the tab to that session', async ($, on) => {
-  // A session of team web, its pointer file in /work, its register holding T1, made by lead and done by api.
-  const { disk } = await start(on, {}, { roots: {}, statuses: {} }, { USERPROFILE: HOME })
+  // A session of team web, its pointer file in /work; teamrig's stats count T1, opened with no goal and done by api.
+  const done = statsTask('T1', { title: { text: 'Ship the pricing page', source: 'team' }, status: 'done' })
+  const { disk } = await start(on, {}, {
+    roots: {},
+    statuses: {},
+    stats: servedStats([done], {
+      all: { active: 0, leadTime: { count: 1, median: 0, p85: 0 }, cycleTime: { count: 0, median: null, p85: null }, overdue: { count: 0, p1: 0 }, due: { total: 0, onTime: 0 } },
+      neverStarted: 1,
+      people: [{ team: 'web', session: 'api', done: 1 }],
+    }),
+  }, { USERPROFILE: HOME })
   disk.write('/work/.teamrig.json', [JSON.stringify({ team: 'web' })])
   disk.write('/Homes/tester/.teamrig/teams/web/config.json', ['{}'])
-  disk.write('/Homes/tester/.teamrig/teams/web/state/events.jsonl', [
-    createLine('T1', { owner: 'api', by: 'lead', at: NOW - HOUR, title: 'Ship the pricing page', goals: [] }),
-    statusLine('T1', 'api', NOW - HOUR / 2, 'done'),
-  ])
   await $.session.start({ cwd: '/work', surface: 'terminal', isInteractive: true })
   const pane = await $.ui.mount({ plugin: 'teamrig-pane', surface: 'terminal', component: 'Pane', requestId: 'teamrig-pane', props: STATS_PROPS })
   await pane.press({ key: 'stats' })
@@ -3528,7 +3558,7 @@ test('the six sections after Flow draw folded, each header alone answering; a pr
   const key = sessionKey(buttonKeys(await pane.drawn()))
   if (key === undefined) throw new Error("no press on api's name in People")
   await pane.press({ key })
-  expect(await drawsLine(pane, /^Scope {2}tree {2}web {2}\[api ×\]$/)).toBe(true)
+  expect(await drawsLine(pane, /^Scope {2}web {2}\[api ×\]$/)).toBe(true)
 })
 
 /** What `teamrig owner` prints for the acts on T1 in the tests below, by its words. */

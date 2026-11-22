@@ -268,6 +268,17 @@ export function askedOf(argv: readonly string[]): Asked {
   return { documents: words.slice(0, words.indexOf('--json')), session: flag('--session'), unless: flag('--unless'), conversation: flag('--conversation') }
 }
 
+/** How a `read stats` run narrowed its document: a team above the caller's, one session's tasks, the range counted. */
+export type StatsAsked = { team: string | null; owner: string | null; range: string | null }
+
+export function statsAskedOf(argv: readonly string[]): StatsAsked {
+  const flag = (name: string): string | null => {
+    const at = argv.indexOf(name)
+    return at < 0 ? null : (argv[at + 1] ?? null)
+  }
+  return { team: flag('--team'), owner: flag('--owner'), range: flag('--range') }
+}
+
 export function printed(...documents: readonly JsonRecord[]): CliRun {
   return { exitCode: 0, stdout: documents.map(document => JSON.stringify(document)).join('\n'), stderr: '', isStdoutTruncated: false }
 }
