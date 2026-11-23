@@ -54,6 +54,15 @@ export function fixedDate(at: number, real: DateConstructor): DateConstructor {
   })
 }
 
+/**
+ * Whether the capture copies teamrig's file at `path` (from the repo root) to run its CLI: package.json and src/,
+ * without its specs or the helpers under src/testing/, which only specs import, so a spec helper's timer read
+ * (a time bound) never stops a capture.
+ */
+export function capturedSource(path: string): boolean {
+  return path !== '' && !path.endsWith('.test.ts') && !path.startsWith('src/testing/')
+}
+
 /** A read of a timer clock, which golden-clock.ts cannot fix, as it fixes the Date clock alone. */
 const OTHER_CLOCK_READ = /\bperformance\.now\(|\bprocess\.hrtime\b/
 

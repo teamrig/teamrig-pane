@@ -12,6 +12,7 @@ import { clockOf } from '../hooks/zone'
 import {
   clockAt,
   GOLDEN_CLOCK_VARIABLE,
+  capturedSource,
   GOLDEN_ROOT,
   GOLDEN_SESSION,
   GOLDEN_START,
@@ -231,6 +232,11 @@ describe('golden capture', () => {
     expect(FixedDate.UTC(2030, 0, 9)).toBe(Date.UTC(2030, 0, 9))
     // The Date it wraps keeps the real clock.
     expect(Date.now).toBe(realNow)
+  })
+
+  test('copies teamrig package.json and src/ but not its specs or the spec helpers under src/testing/', () => {
+    expect(['package.json', 'src/read/index.ts', 'src/register/testdata/events-v0.jsonl'].map(capturedSource)).toEqual([true, true, true])
+    expect(['', 'src/read/index.test.ts', 'src/testing/time-bound.ts', 'src/testing/recorded/a.jsonl'].map(capturedSource)).toEqual([false, false, false, false])
   })
 
   test('names the lines of teamrig source that read a timer clock, which the Date one does not fix', () => {
