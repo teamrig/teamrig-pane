@@ -1885,7 +1885,7 @@ describe('live', () => {
     expect(await new LiveRegister({ ...ports, sessionId: () => Promise.reject(new Error('no session')) }).refresh()).toBe(false)
   })
 
-  test('a refresh while another is under way reads nothing more and answers true', async () => {
+  test('refreshes asked while a poll is under way join it, and it reads once more when it ends', async () => {
     const { ports } = livePorts(new MemoryFiles(), [S1])
     let sessions = 0
     const live = new LiveRegister({
@@ -1896,9 +1896,43 @@ describe('live', () => {
       },
     })
     const first = live.refresh()
-    expect(await live.refresh()).toBe(true)
-    expect(await first).toBe(true)
-    expect(sessions).toBe(1)
+    const joined = [live.refresh(), live.refresh()]
+    expect(await Promise.all([first, ...joined])).toEqual([true, true, true])
+    expect(sessions).toBe(2)
+    await live.refresh()
+    expect(sessions).toBe(3)
+  })
+
+  test('a pin made while the register is being read draws its area when that read ends', async () => {
+    const files = new MemoryFiles()
+    files.write(PATHS.events, createLine('T1', { owner: 'po', by: 'po', at: NOW }))
+    const { ports, snapshot } = livePorts(files, [S1])
+    const source = ports.source
+    if ('missing' in source) throw new Error('livePorts serves a source')
+    const held: { release: (() => void) | null; saved: Promise<void> | null } = { release: null, saved: null }
+    const live = new LiveRegister({
+      ...ports,
+      source: {
+        poll: async input => {
+          if (held.release === null) await new Promise<void>(resolve => (held.release = resolve))
+          return source.poll(input)
+        },
+      },
+      savePin: (id, area) => {
+        held.saved = ports.savePin(id, area)
+        return held.saved
+      },
+    })
+    const firstRead = live.refresh()
+    while (held.release === null) await Promise.resolve()
+    const pinned = live.pin('po')
+    while (held.saved === null) await Promise.resolve()
+    // pin awaited this promise first, so by the time this await returns, pin has asked its refresh mid-read.
+    await held.saved
+    held.release()
+    await Promise.all([firstRead, pinned])
+    expect(snapshot().area).toBe('po')
+    expect(snapshot().tasks.length).toBe(1)
   })
 
   test('keeps a session’s pin under a store key of its own', () => {
