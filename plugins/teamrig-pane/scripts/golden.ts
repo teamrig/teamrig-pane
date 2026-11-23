@@ -14,6 +14,7 @@ import { dirname, join } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { DEFAULT_REGISTER } from '../hooks/core/read/index.ts'
 import {
+  capturedSource,
   GOLDEN_CLOCK_VARIABLE,
   GOLDEN_SESSION,
   GOLDEN_TIME_ZONE,
@@ -88,14 +89,14 @@ function git(gitArgs: readonly string[], input?: string): Buffer {
 }
 
 /**
- * Writes teamrig's package.json and src/ (its tests left out) at the pin under `cli`, read from git history. A source
+ * Writes teamrig's package.json and src/ (its specs and spec helpers left out, capturedSource) at the pin under `cli`, read from git history. A source
  * that reads a timer clock stops the capture, as golden-clock.ts fixes the Date clock alone.
  */
 function copyTeamrig(): void {
   const paths = git(['ls-tree', '-r', '-z', '--name-only', pin, '--', 'package.json', 'src'])
     .toString('utf8')
     .split('\0')
-    .filter(path => path !== '' && !path.endsWith('.test.ts'))
+    .filter(capturedSource)
   const batch = git(['cat-file', '--batch'], `${paths.map(path => `${pin}:${path}`).join('\n')}\n`)
   const clockReads: string[] = []
   let offset = 0
