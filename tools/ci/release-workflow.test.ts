@@ -38,8 +38,8 @@ describe('release.yml', () => {
     assert.match(workflow, /^concurrency:\n {2}group: release\n {2}cancel-in-progress: false\n/m);
   });
 
-  it('has the release pull request job and the UI archive build and upload jobs, each stopping within 20 minutes', () => {
-    assert.deepEqual([...jobs.keys()], ['release-please', 'ui-archive-build', 'ui-archive-upload']);
+  it('has the release pull request job, the UI archive build and upload jobs and the publish job, each stopping within 20 minutes', () => {
+    assert.deepEqual([...jobs.keys()], ['release-please', 'ui-archive-build', 'ui-archive-upload', 'publish']);
     for (const id of jobs.keys()) assert.match(job(id), /^ {4}timeout-minutes: 20$/m, id);
   });
 
@@ -114,9 +114,40 @@ describe('release.yml', () => {
     assert.doesNotMatch(workflow, /fromJSON\(/);
   });
 
-  it('pins each action to a full commit sha and reads no secret', () => {
+  it('pins each action to a full commit sha', () => {
     for (const [, ref] of workflow.matchAll(/uses: [\w./-]+@(\S+)/g)) assert.match(ref ?? '', /^[0-9a-f]{40}$/);
-    assert.doesNotMatch(workflow, /secrets\./);
+  });
+
+  it('reads one secret, the release deploy key, only in the publish job', () => {
+    assert.deepEqual([...workflow.matchAll(/secrets\.(\w+)/g)].map((match) => match[1]), ['RELEASE_DEPLOY_KEY']);
+    assert.match(job('publish'), /^ {10}ssh-key: \$\{\{ secrets\.RELEASE_DEPLOY_KEY \}\}$/m);
+  });
+
+  it('publishes only after a run that released, at the commit release-please tagged', () => {
+    assert.match(
+      job('release-please'),
+      /^ {6}version: \$\{\{ steps\.release\.outputs\.version \}\}\n {6}sha: \$\{\{ steps\.release\.outputs\.sha \}\}$/m,
+    );
+    const text = job('publish');
+    assert.match(text, /^ {4}needs: release-please\n {4}if: \$\{\{ needs\.release-please\.outputs\.release_created == 'true' \}\}$/m);
+    assert.match(text, /^ {10}ref: \$\{\{ needs\.release-please\.outputs\.sha \}\}\n {10}fetch-depth: 0$/m);
+  });
+
+  it('pushes with the deploy key of the release environment, keeping the job token read-only', () => {
+    const text = job('publish');
+    assert.match(text, /^ {4}environment: release$/m);
+    assert.deepEqual(permissionsOf(text), ['contents: read']);
+    assert.doesNotMatch(text, /github\.token|GITHUB_TOKEN|GH_TOKEN/);
+  });
+
+  it("runs only the repo's own publish tool, never an npm package, with the release as plain values", () => {
+    const text = job('publish');
+    assert.deepEqual([...text.matchAll(/uses: ([\w./-]+)@/g)].map((match) => match[1]), ['actions/checkout', 'actions/setup-node']);
+    assert.deepEqual(
+      [...text.matchAll(/^ *(?:- )?run: (.+)$/gm)].map((match) => match[1]),
+      ['node tools/release/publish-cli.ts --version "$VERSION" --source "$SOURCE"'],
+    );
+    assert.match(text, /^ {10}VERSION: \$\{\{ needs\.release-please\.outputs\.version \}\}\n {10}SOURCE: \$\{\{ needs\.release-please\.outputs\.sha \}\}$/m);
   });
 });
 
