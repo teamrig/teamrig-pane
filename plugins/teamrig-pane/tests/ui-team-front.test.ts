@@ -356,13 +356,37 @@ describe("the UI follows the session the person last typed in (T5101)", () => {
     expect(followTimer(fromEnv)).toBe(null)
   })
 
-  test("a record of another team already there at the start leaves the UI on its own team", async () => {
+  test("with no --team, starts on the team of the record already there, over the folder's (T5256)", async () => {
     const rigged = rig({ lastTyped: typedLine('shop', 'ops', 'at-1') })
     await rigged.team.start()
+    const snapshot = await rigged.store.read('snapshot')
+    expect(snapshot.area).toBe('ops')
+    expect(snapshot.tasks.map(task => task.id)).toEqual(['T9'])
+    expect(rigged.runs.at(-1)?.argv.slice(-2)).toEqual(['--team', 'shop'])
+  })
+
+  test('a --team named pins the UI there: a record of another team, at the start or after, is passed over (T5256)', async () => {
+    const rigged = rig({ args: { team: 'web', session: null }, lastTyped: typedLine('shop', 'ops', 'at-1') })
+    await rigged.team.start()
     expect(rigged.runs.at(-1)?.argv.slice(-2)).toEqual(['--team', 'web'])
+    rigged.files.write(LAST_TYPED, typedLine('shop', 'boss', 'at-2'))
     await followIdle(rigged)
     expect(rigged.runs.every(ran => ran.argv.at(-1) === 'web')).toBe(true)
     expect((await rigged.store.read('snapshot')).tasks.map(task => task.id)).toEqual(['T1', 'T2'])
+    // A prompt in its own team still moves the session drawn.
+    rigged.files.write(LAST_TYPED, typedLine('web', 'api', 'at-3'))
+    await follow(rigged, async () => (await area(rigged)) === 'api')
+  })
+
+  test('runs the CLI as the team it reads, in TEAMRIG_TEAM, before and after a rebind (T5256)', async () => {
+    const rigged = rig({ env: { TEAMRIG_TEAM: 'shop' }, lastTyped: typedLine('web', 'po', 'at-1') })
+    await rigged.team.start()
+    expect(rigged.runs.length).toBeGreaterThan(0)
+    expect(rigged.runs.every(ran => ran.init.env?.['TEAMRIG_TEAM'] === 'web')).toBe(true)
+    const before = rigged.runs.length
+    rigged.files.write(LAST_TYPED, typedLine('shop', 'ops', 'at-2'))
+    await follow(rigged, async () => (await rigged.store.read('snapshot')).tasks.some(task => task.id === 'T9'))
+    expect(rigged.runs.slice(before).every(ran => ran.init.env?.['TEAMRIG_TEAM'] === 'shop')).toBe(true)
   })
 
   test("a new prompt in another team's session rebinds the UI to that team and session", async () => {
