@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.83.1](https://github.com/teamrig/teamrig-pane/compare/teamrig-pane-v0.83.0...teamrig-pane-v0.83.1) (2026-11-23)
+
+
+### Bug Fixes
+
+* **ui:** read each team as itself, and follow the person across every team unless --team pins one (T5256) ([1f3241e](https://github.com/teamrig/teamrig-pane/commit/1f3241e49509dd6175d9cfd6503d7aaed9c1ec84))
+
 ## [0.83.0](https://github.com/teamrig/teamrig-pane/compare/teamrig-pane-v0.82.0...teamrig-pane-v0.83.0) (2026-11-23)
 
 
