@@ -1,5 +1,30 @@
 # Changelog
 
+## [0.83.0](https://github.com/teamrig/teamrig-pane/compare/teamrig-pane-v0.82.0...teamrig-pane-v0.83.0) (2026-11-23)
+
+
+### Features
+
+* **pane:** a refresher reads each view when the event stream marks it stale (T4760) ([e718b75](https://github.com/teamrig/teamrig-pane/commit/e718b75029623cf7f6949f70e3767075972ecd57))
+* **pane:** a refresher view that also draws from the team's files keeps its tick while the stream is live (T4760) ([2450796](https://github.com/teamrig/teamrig-pane/commit/2450796686fd94d4ebd7f526314f150a28eeaf10))
+* **pane:** read teamrig's event frames from a stream cut anywhere (T4760) ([9054e0e](https://github.com/teamrig/teamrig-pane/commit/9054e0ef24cfc159247c1aa83b70808824fe1297))
+* **pane:** the dock follows teamrig's event stream through the engine's spawn (T4760) ([19be83f](https://github.com/teamrig/teamrig-pane/commit/19be83f0317c5a22b95ce26c61414738787e2edf))
+* **pane:** the dock's follower leaves the inbox out while no session is asked as (T4760) ([496458d](https://github.com/teamrig/teamrig-pane/commit/496458d2d3faf0785672ad2e90b928d67932a5f1))
+* **pane:** the document source tells the revision it holds of each document and who it last asked as (T4760) ([f241d35](https://github.com/teamrig/teamrig-pane/commit/f241d355bca25fa8ab3aa0b6d9bbf39265b05504))
+* **pane:** the refresher follows again at once when the stream's words change (T4760) ([39f931b](https://github.com/teamrig/teamrig-pane/commit/39f931b37ce62a5e6abeab01c36ba8d6841eaa5c))
+* **pane:** the register is a refresher subject that follows the stream again when the source asks as another (T4760) ([cbee941](https://github.com/teamrig/teamrig-pane/commit/cbee9417680a1446cb21c9b9004d55f03b9eb977))
+* **pane:** the register reads when the event stream marks its documents, its own poll gone (T4760) ([cf3fca7](https://github.com/teamrig/teamrig-pane/commit/cf3fca7fd79226fd76dc517b92b12a45ec0be390))
+* **release:** a publish tool fast-forwards the release branch to a released commit and tags it v&lt;version&gt; (T4363) ([c0754fd](https://github.com/teamrig/teamrig-pane/commit/c0754fd5ec7aaf76c12bb2e1daf5a762ee2a053d))
+
+
+### Bug Fixes
+
+* **golden:** the golden capture leaves teamrig's spec helpers under src/testing/ out of its copy (T5214) ([6f9c561](https://github.com/teamrig/teamrig-pane/commit/6f9c56110f2b6f9cb55153644e8381a922c053c3))
+* **pane:** a pin while the register reads draws at the end of that read (T4760) ([4091006](https://github.com/teamrig/teamrig-pane/commit/40910065634b121d86dc6322fb1f74891a1f1c41))
+* **pane:** a spawn that throws at once ends the event feed as unavailable (T5189) ([cfa8597](https://github.com/teamrig/teamrig-pane/commit/cfa859720873a29c274cc2fff781e1cc57e0eb14))
+* **pane:** the spawn port asks only for next and return, so the spec's child is a plain object (T4760) ([4fd72a2](https://github.com/teamrig/teamrig-pane/commit/4fd72a2231b8b6bd9c978cd915a41b328daed482))
+* **ui:** the UI's team reads at the refresher's tick, as the dock's register does (T4760) ([e077e85](https://github.com/teamrig/teamrig-pane/commit/e077e851ff30db5c78f3d23989e7a2c2ae10d575))
+
 ## [0.82.0](https://github.com/teamrig/teamrig-pane/compare/teamrig-pane-v0.81.0...teamrig-pane-v0.82.0) (2026-11-22)
 
 
