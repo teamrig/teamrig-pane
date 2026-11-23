@@ -46,7 +46,10 @@ type BoundSession = { id: string; pinned: string | null }
 
 export class LiveRegister {
   private timers: Timer[] = []
-  private isPolling = false
+  /** The poll under way, which every refresh asked meanwhile awaits; null when none runs. */
+  private polling: Promise<boolean> | null = null
+  /** Set by a refresh asked while a poll runs, so that poll reads once more when it ends. */
+  private isRerunAsked = false
   private session: BoundSession | null = null
   /** Set after a failed poll, a new pin or a new session, so the next good poll redraws even when no file moved. */
   private mustPublish = true
@@ -82,12 +85,31 @@ export class LiveRegister {
   }
 
   /**
-   * Polls the source and draws what changed. Answers whether the poll worked: false with no source or when it threw
-   * (its reason drawn), true when it did or another poll was under way, which reads what this one would.
+   * Polls the source and draws what changed. Answers whether the last poll worked: false with no source or when it
+   * threw (its reason drawn). A refresh asked while a poll runs joins it, and that poll reads once more when it ends:
+   * the read under way may have started before the pin or the file move that asked for this one.
    */
-  async refresh(): Promise<boolean> {
-    if (this.isPolling) return true
-    this.isPolling = true
+  refresh(): Promise<boolean> {
+    if (this.polling !== null) {
+      this.isRerunAsked = true
+      return this.polling
+    }
+    this.polling = this.pollUntilSettled().finally(() => {
+      this.polling = null
+    })
+    return this.polling
+  }
+
+  private async pollUntilSettled(): Promise<boolean> {
+    let worked: boolean
+    do {
+      this.isRerunAsked = false
+      worked = await this.pollOnce()
+    } while (this.isRerunAsked)
+    return worked
+  }
+
+  private async pollOnce(): Promise<boolean> {
     try {
       const source = this.ports.source
       if ('missing' in source) {
@@ -96,21 +118,16 @@ export class LiveRegister {
       }
       const session = await this.currentSession()
       const now = await this.ports.now()
-      const next = await source.poll({
-        claudeSession: session.id,
-        pinned: session.pinned,
-        now,
-        force: this.mustPublish,
-      })
+      // Taken before the read, so a pin or new session that sets it during the read still forces the next one.
+      const force = this.mustPublish
       this.mustPublish = false
+      const next = await source.poll({ claudeSession: session.id, pinned: session.pinned, now, force })
       if (next && (this.shown === null || !sameView(this.shown, next))) await this.write(() => next)
       return true
     } catch (error) {
       this.mustPublish = true
       await this.showProblem(messageOf(error))
       return false
-    } finally {
-      this.isPolling = false
     }
   }
 
