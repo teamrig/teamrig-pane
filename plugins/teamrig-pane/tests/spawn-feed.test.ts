@@ -218,6 +218,24 @@ describe('spawnFeed', () => {
     expect(broken.heard).toEqual(['hello tasks@r1,inbox@i1', 'end ended'])
   })
 
+  test('a spawn that throws at once is unavailable and told why, so the refresher polls (T5189)', async () => {
+    const heard: string[] = []
+    const feed = spawnFeed({
+      spawn: () => {
+        throw new Error('EINVAL')
+      },
+      cli: () => Promise.resolve(FOUND),
+      asker: () => ASKER,
+    })
+    feed.follow(['tasks'], {
+      onFrame: frame => heard.push(frame.event),
+      onProblem: reason => heard.push(`problem ${reason}`),
+      onEnd: end => heard.push(`end ${end}`),
+    })
+    await settle()
+    expect(heard).toEqual(['problem teamrig events could not start: EINVAL', 'end unavailable'])
+  })
+
   test('a missing CLI starts nothing and is unavailable; a failed look for it says why', async () => {
     const missing = rig({ kind: 'missing', problem: 'no teamrig' })
     missing.follow(['tasks'])
