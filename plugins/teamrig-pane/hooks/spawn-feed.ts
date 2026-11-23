@@ -90,11 +90,13 @@ export function spawnFeed(ports: SpawnFeedPorts): ChangeFeed {
         const asker = ports.asker()
         const followed = followable(documents, asker)
         if (followed.length === 0) return end('unavailable')
-        const child = ports.spawn({ argv: cliArgv(cli.main, eventsWords(followed, asker)) })
-        stream = child
         let hasPulled = false
         let stderr = ''
         try {
+          // Inside the try: a spawn that throws at once is a follower that could not start, ended as one, never an
+          // unhandled rejection of this loop (T5189).
+          const child = ports.spawn({ argv: cliArgv(cli.main, eventsWords(followed, asker)) })
+          stream = child
           for (;;) {
             const step = await child.next()
             hasPulled = true
