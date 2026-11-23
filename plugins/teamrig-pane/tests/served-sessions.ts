@@ -4,7 +4,8 @@
 // in its config's order, then the ones it retired. As teamrig does, a team beside or below the asking one is served
 // without its own words (a launch in words, a hire's scope and reason, a retirement's reason), and a retired session
 // holds only its names and its retirement. What it does not serve as teamrig does: no session has a state, an ask, a
-// host or a conversation, and no text is cut.
+// host or a conversation, and no text is cut. The lead's launch takes Claude Code's lead default under its own entry
+// (HOST_LEAD_DEFAULT), as teamrig serves it on that host.
 import {
   activeHires,
   describeLaunch,
@@ -18,6 +19,7 @@ import {
   type HireRecord,
   type HiringRecord,
   type KitConfig,
+  type LaunchConfig,
   type Rename,
   type RetireRecord,
 } from '../hooks/core/read/index'
@@ -67,13 +69,16 @@ function servedRetire(retire: RetireRecord, words: boolean): JsonRecord {
 /** What no session of this document has: a tab's state and ask, a host and a conversation. */
 const NO_TAB = { state: null, ask: null, since: null, host: null, conversation: null } as const
 
+/** The host's lead default `launchOf` puts under the lead's own entry: Claude Code's (teamrig's src/adapters/hosts/claude-code/models.ts). */
+const HOST_LEAD_DEFAULT: LaunchConfig = { model: 'opus', effort: 'xhigh' }
+
 /** One team's sessions, `words` saying whether its own words are served. */
 function servedTeam({ read, roster, retired }: Part, words: boolean): JsonRecord[] {
   const { team, config, hires } = read
   const leads = new LeadTree(config)
   const hired = new Map(activeHires(hires).map(hire => [hire.session, hire]))
   const members = config.sessions.map((id): JsonRecord => {
-    const launch = launchOf(config, id)
+    const launch = launchOf(config, id, HOST_LEAD_DEFAULT)
     const hire = hired.get(id)
     const before = rehiredFrom(hires, id)
     return {

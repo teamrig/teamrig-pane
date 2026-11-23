@@ -1,6 +1,7 @@
 // Copied from teamrig's src/config/defaults.ts by scripts/sync-core.ts: change it there, then run the sync.
 import type {
   AlertsConfig,
+  ChangesConfig,
   FreezesConfig,
   DeliveryWaitConfig,
   QueueConfig,
@@ -19,7 +20,6 @@ import type {
   IdleConfig,
   ExecConfig,
   HiringConfig,
-  LaunchConfig,
   LockConfig,
   LeadBoundaryConfig,
   LoopsConfig,
@@ -29,12 +29,15 @@ import type {
   PromptsConfig,
   SecretGuardConfig,
   PushGuardConfig,
+  UiConfig,
   ReadonlyShellConfig,
   RefreshConfig,
   RegisterConfig,
   ScaleOutConfig,
   SkillsConfig,
   StatusLineConfig,
+  StepsConfig,
+  SyncConfig,
   TestsConfig,
   TurnLogConfig,
   NeedsYouConfig,
@@ -44,6 +47,7 @@ import type {
   BranchesConfig,
   MeetingConfig,
 } from './types.ts';
+import { DEFAULT_CAPS, DEFAULT_SCOPE } from '../sync/scope.ts';
 
 /** Defaults for every key except the roster (`sessions`, `roles.lead`), which each team supplies. */
 export const DEFAULT_OWNER_GATES: readonly string[] = [
@@ -98,10 +102,12 @@ export const DEFAULT_REGISTER: RegisterConfig = {
    * 3 at the median and 9 at the 90th percentile; the two days past 10 (36 and 19) were the run that raised the question.
    * goalProgressDays: a working day that moves no planned task is the drift to catch the next morning.
    * overSizeMultiple: the old register flagged a task whose cost passed twice its estimate (T327).
+   * blockerOpenAfterHours: a blocker is fixed now, so half a working day unfixed is the time to ask why (T4329).
    */
   check: {
     staleAfterHours: 72,
     notPickedUpAfterHours: 24,
+    blockerOpenAfterHours: 4,
     prioritySkipAfterHours: 24,
     maxSelfMadePerDay: 10,
     goalProgressDays: 1,
@@ -138,6 +144,9 @@ export const DEFAULT_CONTEXT_FILES: ContextFilesConfig = {
 };
 
 export const DEFAULT_LOCK: LockConfig = { ttlMs: 300_000, pollMs: 50, waitMs: 20_000 };
+
+/** No change sources named: `teamrig changes` reads every one that applies to the project. */
+export const DEFAULT_CHANGES: ChangesConfig = { sources: [] };
 
 /** No exec PATH: a privileged command names its program by absolute path until the team lists its tool folders. */
 export const DEFAULT_EXEC: ExecConfig = { path: [] };
@@ -215,6 +224,7 @@ export const DEFAULT_COMMITS: CommitsConfig = {
   testPatterns: ['(^|/)(tests?|__tests__|spec)/', '\\.(test|spec)\\.[^/]+$', '(^|/)test_[^/]+\\.py$'],
   sourcePatterns: ['\\.([cm]?[jt]sx?|py|go|rs|java|kt|cs|c|cc|cpp|h|hpp|rb|swift|vue|svelte|sh|ps1)$'],
   gate: 'warn',
+  stamp: true,
 };
 
 /**
@@ -249,16 +259,16 @@ export const DEFAULT_SESSION_SHARE = 1;
 
 export const DEFAULT_ALERTS: AlertsConfig = { persistentFailureHours: 24 };
 
+/** The UI shows in the terminal `teamrig ui` is run in, as it did before `ui.mode` (T5105). */
+export const DEFAULT_UI: UiConfig = { mode: 'terminal' };
+
 /** The remote a repository's merge command merges into when `merge.remote` is unset. */
 export const DEFAULT_MERGE_REMOTE = 'origin';
-
-/** Where `teamrig worktree add` makes a repository's worktrees when `worktreeFolder` is unset: in its main checkout, where Claude Code makes its own. */
-export const DEFAULT_WORKTREE_FOLDER = '.claude/worktrees';
 
 /** A repository's docs folder when `docsFolder` is unset: `docs` at its root, where most projects keep theirs. */
 export const DEFAULT_DOCS_FOLDER = 'docs';
 
-export const DEFAULT_DECISIONS: DecisionsConfig = { batchTimesUtc: [], batchAt: 5, dedicatedOwners: [] };
+export const DEFAULT_DECISIONS: DecisionsConfig = { batchTimesUtc: [], batchAt: 5, dedicatedOwners: [], ownMeetingTeams: [] };
 
 export const DEFAULT_LOOPS: LoopsConfig = { chainNudgeAt: 3 };
 export const DEFAULT_LEAD_BOUNDARY: LeadBoundaryConfig = { enabled: true, ownPaths: [], searchNudgeAt: 3 };
@@ -284,7 +294,7 @@ export const DEFAULT_MEETING_NOTICES: MeetingNoticesConfig = {
  * caps a session at 4 an hour however much is handed. No day start: waking every session each morning costs up to
  * 210k W each, so a team opts in with `wake.dayStartUtc`.
  */
-export const DEFAULT_WAKE: WakeConfig = { enabled: true, priority: 1, batchSeconds: 120, minGapMinutes: 15 };
+export const DEFAULT_WAKE: WakeConfig = { enabled: true, priority: 1, batchSeconds: 120, minGapMinutes: 15, maxGapMinutes: 30 };
 
 /**
  * The agenda panel is on: it shows only in the lead's tab while a meeting is open, so it costs no other tab anything.
@@ -298,11 +308,14 @@ export const DEFAULT_WAKE: WakeConfig = { enabled: true, priority: 1, batchSecon
 export const DEFAULT_MEETING: MeetingConfig = {
   panel: { enabled: true },
   spotlight: { enabled: true, dim: 0.6, breakthroughSeconds: 120 },
-  statusLine: { enabled: true, colour: '#8b57e3', heldText: 'meeting on: held' },
+  statusLine: { enabled: true, colour: '#8b57e3', heldText: 'owner in meeting' },
 };
 
 /** About a screenful: two or three failing tests with their errors and first stack frames. */
 export const DEFAULT_TESTS: TestsConfig = { maxFailureChars: 4000 };
+
+/** A week: time to notice a step went wrong and take its backup back. */
+export const DEFAULT_STEPS: StepsConfig = { backupDays: 7 };
 
 /**
  * GitHub's own field names and default issue types. A goal is a Feature, as an issue opened for one is typed
@@ -328,14 +341,20 @@ export const DEFAULT_ISSUE_FIELDS: IssueFieldsConfig = {
 export const DEFAULT_GITHUB: GithubConfig = { repos: [], owners: {}, areaOwners: {}, sessions: {}, closedDays: 14, probeSeconds: 60, statusPush: false, acceptLabel: 'teamrig', similarThreshold: 0.35, activity: true, followMax: 20, stamp: true, fields: DEFAULT_ISSUE_FIELDS };
 
 /**
+ * The import a team gets with no setup (T5013): its people's issues and those labelled `teamrig`, at most 200 open
+ * tasks per tracker and 50 new ones a run, so a large project never floods the register.
+ */
+export const DEFAULT_SYNC: SyncConfig = { scope: DEFAULT_SCOPE, ...DEFAULT_CAPS };
+
+/**
  * Claude Code compacts a 200k window at about 167k, so 120k refreshes before that; every 3 tasks catches a
  * session that grows slowly, from 80k up. Measured over 8 days of 12 sessions: about 9 refreshes a day in all.
  * The user types /clear for the fresh start of a member (`autoRestart` 'lead'): an automatic /clear wiped the screen
  * while the user was still reading the last reply, still had its question to answer, or was away. The lead restarts
  * on its own: with it off, a lead grew unasked through the night, and the mod's activity hold and countdown keep the
- * /clear from landing under the user. A session on a 1M window refreshes at 250k (a `[1m]` launch, or one whose
- * state shows the window, as a plain `opus` lead's fresh start past 120k does): a fresh one starts at about 122k,
- * and the window has room far past it. While a handover is pending, the compaction at 167k waits up to 185k: 18k of
+ * /clear from landing under the user. A session on a 1M window refreshes at 120k too (T4083): a fresh one starts at
+ * about 122k, which its baseline holds, and a larger threshold left a tab that never reached it unrefreshed. While a
+ * handover is pending, the compaction at 167k waits up to 185k: 18k of
  * room to finish the step and write it, and 15k under the window for a large tool result. A handover over 20 KB is
  * refused: on 10-24 most were 4 to 8 KB, and one appended
  * to section by section (29 of them) reached 88 KB, which its every fresh start read whole.
@@ -343,7 +362,6 @@ export const DEFAULT_GITHUB: GithubConfig = { repos: [], owners: {}, areaOwners:
 export const DEFAULT_REFRESH: RefreshConfig = {
   enabled: true,
   contextTokens: 120_000,
-  largeWindowContextTokens: 250_000,
   everyTasks: 3,
   everyTasksMinTokens: 80_000,
   tabTitle: true,
@@ -494,11 +512,3 @@ export const DEFAULT_HIRING: HiringConfig = {
   scaleOut: DEFAULT_SCALE_OUT,
 };
 
-/**
- * The lead's model and effort for each key its `launch` entry leaves unset: Opus (Claude Code's `opus`
- * alias, its newest Opus) at xhigh effort, since the lead plans, splits and judges the whole team's work.
- * Not `best`: in a lead A/B, Fable at xhigh judged no better than Opus and cost 2.4 times as much. A team
- * sets `launch.<lead id>.model` to `best` or a full model id to change it. The other sessions default to
- * Claude Code's own.
- */
-export const DEFAULT_LEAD_LAUNCH: Required<Pick<LaunchConfig, 'model' | 'effort'>> = { model: 'opus', effort: 'xhigh' };

@@ -2,14 +2,15 @@
 /**
  * The issue host port: where a team's issues and pull requests live, behind names that hold for any host. teamrig
  * writes to a host only through this port, split by kind (Tracker, CodeHost) into small capabilities, and each host
- * (GitHub is the only one so far, src/github/host.ts, and it is both kinds) is an adapter that keeps its own access
+ * (GitHub is the only one so far, src/adapters/connectors/github/host.ts, and it is both kinds) is an adapter that keeps its own access
  * rules. A repository reaches a host only when the team config lists it there.
  */
 
 import type { IssueFields } from './fields.ts';
 import type { HostIssue, IssueThread, LinkedIssue, ReadComment } from './issue.ts';
 import type { HostPosts } from './post.ts';
-import type { HostPull } from './pull.ts';
+import type { HostPull, PullChecks, PullState } from './pull.ts';
+import type { ScopeRequest } from '../sync/scope.ts';
 
 /** One issue or pull request: its repository (`owner/name`, in lowercase) and its number. */
 export interface IssueTarget {
@@ -31,6 +32,16 @@ export function parseIssueTarget(text: string): IssueTarget | undefined {
 /** `owner/name#number`. */
 export function targetText(target: IssueTarget): string {
   return `${target.repo}#${target.number}`;
+}
+
+/**
+ * An issue's page on GitHub, built from its repository and number. Every address teamrig keeps or serves for an
+ * issue is this one, never the string GitHub's API sent: that string is outside text, and a kept field is served
+ * as the team's own. The sync writes it as a closed issue's evidence, and the GitHub adapter serves it as a ref's
+ * page, so it sits beside the issue ref both read.
+ */
+export function issuePage(repo: string, number: number): string {
+  return `https://github.com/${repo}/issues/${number}`;
 }
 
 /** Why an issue was closed, as the host shows it: done, not to be done, or a duplicate of another. */
@@ -93,7 +104,16 @@ export type HostComments = { readonly kind: 'read'; readonly comments: readonly 
  * a reader should know about the read; or why it could not be read, in which case nothing of it was.
  */
 export type HostList =
-  | { readonly kind: 'listed'; readonly issues: readonly HostIssue[]; readonly notes: readonly string[] }
+  | {
+      readonly kind: 'listed';
+      readonly issues: readonly HostIssue[];
+      readonly notes: readonly string[];
+      /**
+       * The accounts the tracker counted as the team's people for a scoped list, as its issues name assignees (its
+       * connector's `people` key and the signed-in account): the core's scope check counts them beside the request's.
+       */
+      readonly people?: readonly string[];
+    }
   | { readonly kind: 'failed'; readonly reason: string };
 
 /**
@@ -119,6 +139,16 @@ export type HostPulls =
  */
 export type HostJobLog =
   | { readonly kind: 'read'; readonly step: string | undefined; readonly lines: readonly string[] }
+  | { readonly kind: 'failed'; readonly reason: string };
+
+/**
+ * One CI run's re-run (T5063): its failed jobs started again, as the attempt named, of the workflow file and event
+ * the run read showed; refused before any write, the run read first and found not to be one a re-run may follow (it
+ * passed or has not ended, a privileged event started it, or it ran three times); or the read or the write failed.
+ */
+export type HostRerun =
+  | { readonly kind: 'done'; readonly workflow: string; readonly event: string; readonly attempt: number }
+  | { readonly kind: 'refused'; readonly reason: string }
   | { readonly kind: 'failed'; readonly reason: string };
 
 /** One issue to open: its repository (`owner/name`), title, body and labels. */
@@ -148,8 +178,12 @@ export interface HostAccess {
 
 /** A tracker's issues: listed, opened, their body replaced, closed, named by the host's own id, and one read as it is now. */
 export interface IssueStore {
-  /** The open issues of `repo` and those closed on or after `closedSince` (`YYYY-MM-DD`, UTC), the newest state of each. */
-  list(repo: string, closedSince: string): Promise<HostList>;
+  /**
+   * The open issues of `repo` and those closed on or after `closedSince` (`YYYY-MM-DD`, UTC), the newest state of each.
+   * With `request`, a tracker may ask only for the issues in its scope and the held ones (sync/scope.ts), so a large
+   * place is never read whole; the core checks each issue against the scope again, so listing more is safe.
+   */
+  list(repo: string, closedSince: string, request?: ScopeRequest): Promise<HostList>;
   /** Opens one issue. */
   open(draft: IssueDraft): Promise<HostOpen>;
   /** Replaces the body (the description) of the issue or pull request with `body`; its title, state and the rest stay. */
@@ -260,10 +294,15 @@ export interface PullRequests {
   pulls(repo: string, since: string | undefined): Promise<HostPulls>;
 }
 
-/** A code host's CI checks: a failed job's log, read. */
+/** A code host's CI checks: a failed job's log, read, and a whole run started again. */
 export interface Checks {
   /** The end of the log of the failed CI job `jobId` of `repo` (a pull request's FailedJob id). */
   jobLog(repo: string, jobId: number): Promise<HostJobLog>;
+  /**
+   * Starts the failed jobs of the CI run `runId` of `repo` again, as `ci rerun` asks after a glitch on the host's side
+   * (T5063), only once a read shows the run may be re-run (HostRerun); any other run is refused unwritten.
+   */
+  rerunRun(repo: string, runId: number): Promise<HostRerun>;
 }
 
 /** A code host's posts: what was written on its pull requests and issues, read. */
@@ -281,8 +320,86 @@ export interface LabelFiles {
   labelFile(repo: string): Promise<HostLabelFile>;
 }
 
+/**
+ * One pull request as a landing reads it just before it writes: what `pr approve` and `pr merge` check (T4817). `id`
+ * is the host's own opaque id of the pull request, which a landing hands back; `head` is the full sha of its head.
+ * `mergeQueue` says whether the repository's default branch lands through a queue, `queued` whether this pull
+ * request is in it now, `conflicts` whether the host found it conflicting with its base, and `checks` its head's
+ * checks taken together (`none` when the head has none).
+ */
+export interface PullStand {
+  readonly id: string;
+  readonly state: PullState;
+  readonly draft: boolean;
+  readonly head: string;
+  readonly base: string;
+  readonly defaultBranch: string;
+  readonly mergeQueue: boolean;
+  readonly queued: boolean;
+  readonly conflicts: boolean;
+  readonly checks: PullChecks;
+}
+
+/** One read of where a pull request stands: read, missing (none the access can see), or the read failed. */
+export type HostPullStand = { readonly kind: 'read'; readonly pull: PullStand } | { readonly kind: 'missing' } | { readonly kind: 'failed'; readonly reason: string };
+
+/** How landing a pull request ended: put in the merge queue, merged at once, or one plain line saying why not. */
+export type HostLanding = { readonly kind: 'enqueued' } | { readonly kind: 'merged' } | { readonly kind: 'failed'; readonly reason: string };
+
+/**
+ * One file one commit changes, as a code host reads it: its path (and the one it had, for a rename), how it changed,
+ * and its patch, the diff's hunks with their `@@` lines; null when the host shows none (a binary file, or a diff too
+ * large to send), when `blob`, the id of its content after the commit, stands in for it.
+ */
+export interface HostCommitFile {
+  readonly path: string;
+  readonly previousPath: string | null;
+  readonly status: string;
+  readonly patch: string | null;
+  readonly blob: string;
+}
+
+/** One commit a head carries over a base, as a code host reads it: `parents` counts its parents, so 2 or more is a merge. */
+export interface HostCommit {
+  readonly sha: string;
+  readonly subject: string;
+  readonly parents: number;
+  readonly files: readonly HostCommitFile[];
+}
+
+/**
+ * The commits a head carries over a base, oldest first (T5117): read; missing, when the host knows no such commit;
+ * partial, when the host would show only some of the commits or of a commit's files, so no comparison may rest on it;
+ * or failed.
+ */
+export type HostPullWork =
+  | { readonly kind: 'read'; readonly commits: readonly HostCommit[] }
+  | { readonly kind: 'missing' }
+  | { readonly kind: 'partial'; readonly reason: string }
+  | { readonly kind: 'failed'; readonly reason: string };
+
+/**
+ * A code host's landing of a pull request (T4817): read where it stands, approve one head of it, and land it. The
+ * approval's body is the adapter's own fixed line naming the head, never text a caller gives. The host's own rules
+ * (required checks, reviews) gate the landing too, unless the token may bypass them, so `pr merge` checks the head's
+ * checks itself first.
+ */
+export interface PullLanding {
+  /** Where the pull request stands now. */
+  pullStand(target: IssueTarget): Promise<HostPullStand>;
+  /**
+   * The commits `head` (a full sha) carries over the branch `base` of the pull request's repository, each with its
+   * files' patches, so a landing can tell a head rebased with the same work from one with new work (T5117).
+   */
+  pullWork(target: IssueTarget, base: string, head: string): Promise<HostPullWork>;
+  /** Approves the pull request at `head` (its full sha), so the approval covers only that head. */
+  approvePull(target: IssueTarget, head: string): Promise<HostEnd>;
+  /** Lands the pull request as `pull` read it: into its repository's merge queue when it has one, else merged at its head. */
+  landPull(target: IssueTarget, pull: PullStand): Promise<HostLanding>;
+}
+
 /** A code host: where a team's pull requests live, with every capability over them and the repository's files. */
-export interface CodeHost extends HostAccess, PullRequests, Checks, ReviewPosts, LabelFiles {}
+export interface CodeHost extends HostAccess, PullRequests, Checks, ReviewPosts, LabelFiles, PullLanding {}
 
 /** A host of both kinds, as GitHub is: one adapter that is the tracker and the code host of its repositories. */
 export interface IssueHost extends Tracker, CodeHost {}

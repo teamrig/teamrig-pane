@@ -69,7 +69,7 @@ export class NewerDataError extends Error {
   readonly known: number;
 
   constructor(file: string, found: number, known: number) {
-    super(`${file} holds format v${found} records; this version writes v${known}. A newer teamrig wrote them: in a Claude Code tab, /reload-plugins loads the installed one; elsewhere, update teamrig before writing.`);
+    super(`${file} holds format v${found} records; this version writes v${known}. A newer teamrig wrote them: reload the plugins in your session to load the installed one, or update teamrig before writing.`);
     this.name = 'NewerDataError';
     this.file = file;
     this.found = found;
