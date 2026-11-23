@@ -10,7 +10,8 @@ export const STDOUT_CAP = 32 * 1024 * 1024
 /** What a run answers: the fields of the engine's own result that the pane reads (hooks/teamrig-cli.ts CliRun). */
 export type ProcessRun = { exitCode: number; stdout: string; stderr: string; isStdoutTruncated: boolean }
 
-export type RunInit = { readonly cwd?: string; readonly timeoutMs: number }
+/** Where and how long a run may go; `env` names variables set for it over the UI's own environment. */
+export type RunInit = { readonly cwd?: string; readonly timeoutMs: number; readonly env?: Readonly<Record<string, string>> }
 
 /** Runs programs, and stops the ones still running when told to. */
 export class Processes {
@@ -22,7 +23,10 @@ export class Processes {
     this.cap = cap
   }
 
-  /** Runs `argv`, in `init.cwd` when given; resolves what it answered, with stdout cut at the cap and said to be. */
+  /**
+   * Runs `argv`, in `init.cwd` when given and with `init.env` over this process's variables; resolves what it
+   * answered, with stdout cut at the cap and said to be.
+   */
   run(argv: readonly string[], init: RunInit): Promise<ProcessRun> {
     const [command, ...args] = argv
     if (command === undefined) return Promise.reject(new Error('no program to run'))
@@ -30,6 +34,7 @@ export class Processes {
     return new Promise<ProcessRun>((resolve, reject) => {
       const child = spawn(command, args, {
         ...(init.cwd === undefined ? {} : { cwd: init.cwd }),
+        ...(init.env === undefined ? {} : { env: { ...process.env, ...init.env } }),
         stdio: ['ignore', 'pipe', 'pipe'],
         windowsHide: true,
       })

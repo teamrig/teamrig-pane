@@ -132,10 +132,13 @@ export const NO_TEAM_PROBLEM = `no team here: run teamrig ui in a teamrig team's
  * the first read on. Its start never rejects: what it cannot find or read is the pane's problem line.
  *
  * Started with no session named (no `--session`, no TEAMRIG_SESSION), it follows the person (T5101): it draws the
- * session they last typed in when that is in its team, and on each POLL_MS reads the last-typed record again (one small
- * file, last-typed.ts): a new prompt in another session of its team moves the pin there, one in another team rebinds
- * the UI to that team. A record already there at the start that names another team is left alone: the team the UI
- * was started for comes first until the person types somewhere. A session named stays pinned and nothing is followed.
+ * session they last typed in, and on each POLL_MS reads the last-typed record again (one small file, last-typed.ts):
+ * a new prompt in another session of its team moves the pin there. With no `--team`, the UI covers every team on the
+ * host (T5256): it starts on the team of the record already there, else the one the environment or the
+ * folder names, and a prompt in another team rebinds it to that team. A `--team` pins it to that team, and a record of
+ * another team is passed over. A session named stays pinned and nothing is followed. Each run of the CLI runs as the
+ * team it reads, in TEAMRIG_TEAM too: teamrig takes the caller's team from it, else the folder, and reads only that
+ * team and the ones above it, so a team below the folder's would be refused.
  */
 export class TeamFront {
   readonly #deps: TeamFrontDeps
@@ -168,7 +171,7 @@ export class TeamFront {
       const follows = deps.args.session === null && deps.env(SESSION_ENV) === undefined
       const record = follows ? await this.#lastTyped() : null
       this.#seenAt = record?.at ?? null
-      await this.#bind(deps.args.team, record)
+      await this.#bind(deps.args.team ?? record?.team ?? null, record)
       if (follows && !this.#isStopped) this.#followTimer = deps.every(POLL_MS, () => void this.#follow())
     } catch (error) {
       await this.#showProblem(messageOf(error)).catch(() => undefined)
@@ -193,6 +196,8 @@ export class TeamFront {
       if (record === null || record.at === this.#seenAt || this.#isStopped) return
       this.#seenAt = record.at
       if (record.team !== this.#teamId) {
+        // A team the command line named is pinned: a prompt in another team leaves the UI where it is.
+        if (this.#deps.args.team !== null) return
         // The old team's refresher and register both stop, or its tick would go on reading the team left.
         this.#refresher?.stop()
         this.#live?.stop()
@@ -222,7 +227,7 @@ export class TeamFront {
     const main = cli.kind === 'found' ? cli.main : null
     const teamId = places.kind === 'found' ? places.team.team : null
     const run = (argv: readonly string[], timeoutMs: number): Promise<CliRun> =>
-      deps.run(withNode(withTeam(argv, main, teamId), deps.env(UI_ENV.node)), { cwd: deps.cwd, timeoutMs })
+      deps.run(withNode(withTeam(argv, main, teamId), deps.env(UI_ENV.node)), { cwd: deps.cwd, timeoutMs, ...(teamId === null ? {} : { env: { [TEAMRIG_ENV.team]: teamId } }) })
     const typed = record !== null && record.team === teamId ? record.session : null
     const session = deps.args.session ?? deps.env(SESSION_ENV) ?? typed
     this.#teamId = teamId
