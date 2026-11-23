@@ -1,0 +1,1793 @@
+// Copied from teamrig's src/register/policy.ts by scripts/sync-core.ts: change it there, then run the sync.
+import { MAX_DESCRIPTION } from '../config/defaults.ts';
+import { LeadTree } from '../config/lead-tree.ts';
+import { priorityLevels } from '../config/priorities.ts';
+import type { KitConfig } from '../config/types.ts';
+import { ADDRESS_PATTERN, type SessionAddress } from '../core/address.ts';
+import { clipEnd } from '../core/clip.ts';
+import { SecretScanner } from '../core/secrets.ts';
+import { parseDeadline, parseUtcDay, parseUtcDeadline, showStored, storedText } from '../core/time.ts';
+import type { TimeZone } from '../core/zone.ts';
+import { waitAnswerersOf } from './approval.ts';
+import { blockerHold } from './blocker-hold.ts';
+import type { SlicedGoal } from './focus.ts';
+import { NO_GOAL_TAGS } from './goals.ts';
+import { AFFECTS_FLAG, AFFECTS_USAGE, CARD_FLAGS, cardProblem, cardTexts, GATE_FLAG, gateOf, gateUsage, keptCard, OPTION_SEPARATOR, proofWordOf, RUN_FLAG, sameCard, SECURITY_FLAG, typedHandStep, WHY_ASK_FLAG, whyAskUsage, type DecisionCard } from './card.ts';
+import { holdsDescription } from './description-cut.ts';
+import { auditOf, HAND_STEP_KINDS, handStepFileProblem, shortSha256, type AuditPin } from './hand-step.ts';
+import { verdictIsCurrent, verdictReadOf, type SecurityVerdictPin } from './security-verdict.ts';
+import { ITEM_TYPES, sizeProblem, type ApprovalVerdict, type ItemType, type TaskFieldName, type TaskFields, type TaskPrep } from './events.ts';
+import { droppedApproval, isRepark, taskNumber, type RegisterState, type Task } from './fold.ts';
+import { commitsNamed } from './head-sha.ts';
+import { ACTIVE_STATUSES, BLOCKER_PRIORITY_ID, FOLLOWUP_STATUSES, GITHUB_SOURCE, hasIssueOrReason, IMPORT_SOURCES, isImportSource, isIssueRef, isTopPriority, priorityText, SESSION_NAME, WAIT_STATUSES, type ImportSource, type TaskStatus } from './model.ts';
+import { ITEM_TYPE_TRAITS, traitsOf } from './item-types.ts';
+import { waitsOnOwner } from './owner-waits.ts';
+import { asksReview, missedTaskIds, reviewGap, reviewGapText, reviewProblem, reviewTexts, type ProblemReview } from './review.ts';
+import { loopFix, needPath, NO_TASKS_ELSEWHERE, pathText, type TasksElsewhere } from './tree.ts';
+import { dueStartHolds, dueVerifyHold, heldStart, startHolds, WATCH_USAGE } from './verify.ts';
+import { isPeerWait, isReady, sameWait, sameWaits, unfinishedAfter, waitContext, waitSpelling, type PersonWait, type PersonWaitKind, type WaitReason } from './waits.ts';
+import { wipHold } from './wip.ts';
+import { MIGRATE_COMMAND } from '../permissions/service-commands.ts';
+import { roleHolding } from '../permissions/service-roles.ts';
+
+/** Team policy, applied on WRITE only: the parser accepts any well-formed history. */
+export type Verdict<T> = { readonly ok: true; readonly value: T } | { readonly ok: false; readonly error: string };
+
+/** The skill name that closes a task which produced no reusable procedure. */
+export const NO_SKILL = 'none';
+
+/**
+ * Who the GitHub import's events and lines are written by. Each import writes as its source (model.ts
+ * IMPORT_SOURCES), so this is GitHub's: the inbox lines issue sync posts are still GitHub's alone.
+ */
+export const GITHUB_ACTOR: ImportSource = GITHUB_SOURCE;
+
+/** The statuses an import sets on its own tasks: an issue's open state, or how it was closed. */
+export const IMPORT_STATUSES: readonly TaskStatus[] = ['open', 'done', 'dropped'];
+
+/**
+ * Fields the lead may change on a task someone else owns: who does it, how urgent, when, in what order and its size
+ * (the lead plans the week), its type and critical mark, so the lead can mark another session's fix a bug, its
+ * work class, as leaders triage the class of their sessions' tasks (T2076), the goal slice it prepares (T2453) and
+ * its exemption from its owner's rest (T4948).
+ */
+export const LEAD_FIELDS: readonly TaskFieldName[] = ['owner', 'priority', 'due', 'week', 'after', 'size', 'type', 'critical', 'pin', 'exempt', 'workClass', 'prepares'];
+
+/**
+ * Fields the lead may change on a task whose owner is no session of the team any more (a retired hire, a session that
+ * left at a team split): the LEAD_FIELDS and its ref, which no session of the team could keep true otherwise, such as
+ * when the notes it points at move (T1830).
+ */
+export const LEFT_OWNER_LEAD_FIELDS: readonly TaskFieldName[] = [...LEAD_FIELDS, 'ref'];
+
+export interface AddInput {
+  readonly title: string;
+  /** What the task is and why, in plain words; required while `register.requireDescription` is on. */
+  readonly description?: string;
+  readonly owner: string;
+  readonly source: string;
+  readonly ref?: string;
+  readonly priority: number;
+  readonly due?: string;
+  readonly goals?: readonly string[];
+  /** Said to serve no goal (`--goals none`); never with `goals`. */
+  readonly noGoal?: boolean;
+  readonly week?: string;
+  readonly after?: readonly string[];
+  /** What the task costs, in percent of the weekly usage limit. */
+  readonly size?: number;
+  /** What the item is (`--type`); absent: not set, read as a task. */
+  readonly type?: ItemType;
+  /** Whether it sits in a critical area (`--critical`), which only a type with a review takes. */
+  readonly critical?: boolean;
+  /** Its work class (`--class`), one of `focus.classes`; absent: not set, read as `focus.defaultClass` (T2076). */
+  readonly workClass?: string;
+}
+
+/** A task for a GitHub issue: its source is GITHUB_SOURCE and its ref the issue's (sync/map.ts). */
+export interface ImportInput {
+  readonly title: string;
+  /** The issue's body, cleaned and cut to MAX_DESCRIPTION; null for an empty body. */
+  readonly description: string | null;
+  readonly owner: string;
+  readonly ref: string;
+  readonly priority: number;
+}
+
+/** The fields the import keeps in step with GitHub; the rest of a task is the team's. */
+export type ImportChanges = Partial<Pick<TaskFields, 'title' | 'description' | 'priority'>>;
+
+export interface StatusInput {
+  readonly status: TaskStatus;
+  readonly note?: string;
+  readonly evidence?: string;
+  readonly skill?: string;
+  /** The reasons a `waiting` status waits for (at least one), or what a `verifying` one's proof waits for; none with any other status. */
+  readonly waits?: readonly WaitReason[];
+  /**
+   * The parts of the card a wait on a decision or an approval asks (card.ts); only with such a wait. Parts left out
+   * keep what the task's card said while it was waiting. Its hand step file comes only as `run`, with its sha256.
+   */
+  readonly card?: Partial<Omit<DecisionCard, 'run'>>;
+  /**
+   * The hand step file the card hands the owner to run (T2312, core rule 11), by the path and sha256 the CLI read now;
+   * only with a wait on the owner's decision or approval, and only while an audit on the task pins that path at that
+   * sha256. Left out, the card keeps the file it handed while it still asks the owner.
+   */
+  readonly run?: AuditPin;
+  /** What will prove a `verifying` task works; only with that status. */
+  readonly proof?: string;
+  /**
+   * What a sighting shows once a `done` change runs live, when tests or a dry run proved it and only that sighting is
+   * left to watch for (T1306); only with `done`.
+   */
+  readonly watch?: string;
+  /**
+   * What shows the proof of the verifying tasks a start needs exists; only on a start they hold. The start then goes
+   * through, and the CLI asks their owners to confirm (done) or reopen them.
+   */
+  readonly met?: string;
+  /** The date to verify by, as the task's due date; only with `verifying`. */
+  readonly due?: string;
+  /** The tasks the work leaves (a finding, a next step), by id; empty for `--followups none`. Only with FOLLOWUP_STATUSES. */
+  readonly followups?: readonly string[];
+  /** The parts of its review the change gives (review.ts); only on a bug (a type whose traits ask a review). Parts left out keep what the task had. */
+  readonly review?: ProblemReview;
+  /** Said to be a one-commit fix (`--one-commit`), which the WIP rule lets start (wip.ts); only with `in-progress`. */
+  readonly oneCommit?: boolean;
+  /** The classes past their share of the week, which the CLI reads from the usage store; a caller passing none holds nothing for it (wip.ts). */
+  readonly spentClasses?: ReadonlySet<string>;
+  /** Said to give up the task's approval (`--drop-approval`), as a new ask on a new head does (T3207); only on a set that drops one. */
+  readonly dropApproval?: boolean;
+}
+
+/**
+ * What `set --ask` asks another session for: a task of its own, which the caller's task then waits on
+ * (`task:<its id>`) in the same write.
+ */
+export interface AskInput {
+  /** The session asked, as an id. */
+  readonly owner: string;
+  /** The work asked for: the new task's title. */
+  readonly title: string;
+  /** The new task's due date. */
+  readonly due?: string;
+}
+
+/**
+ * What a status change is judged against besides the task: the register as read, the tasks the team tree's other
+ * registers hold (a wait or a follow-up may name one), the time, the team's zone (a stored day is a day of it), and
+ * whether a cited skill exists.
+ */
+export interface StatusContext {
+  readonly state: RegisterState;
+  readonly elsewhere: TasksElsewhere;
+  readonly now: Date;
+  readonly zone: TimeZone;
+  readonly skillExists: boolean;
+  /** The goal records of the team's tree, read for a start's prep marker (T2453); empty for any other status. */
+  readonly goals: ReadonlyMap<string, SlicedGoal>;
+}
+
+export interface StatusChange {
+  readonly status: TaskStatus;
+  readonly note: string | null;
+  readonly evidence: string | null;
+  readonly skill: string | null;
+  /** Only with `waiting` or `verifying` (what its proof waits for). */
+  readonly waits?: readonly WaitReason[];
+  /** Only with a wait on a decision or an approval: the card given, or the one the task had while waiting. */
+  readonly card?: DecisionCard;
+  /** Only with `verifying`: the proof given, or the one the task already had when it was verifying before. */
+  readonly proof?: string;
+  /** Only with `done`, and only when given: the sighting left to watch for. Setting done again without one clears it. */
+  readonly watch?: string;
+  /** Only on a start the verifying tasks it needs hold: what shows their proof exists. */
+  readonly met?: string;
+  /** Only on a start said to be a one-commit fix: the mark that lets a pass of the WIP rule be audited. */
+  readonly oneCommit?: boolean;
+  /** Only with `verifying`, and only when it moves the task's due date: the date to verify by. */
+  readonly due?: string;
+  /** Only when the change names them: the tasks the work leaves, empty for none, with the tasks its review's missed parts name. */
+  readonly followups?: readonly string[];
+  /** Only when the change gives them: the parts of the bug's review it gives. */
+  readonly review?: ProblemReview;
+}
+
+/**
+ * The refusal of a blocker (T4329) with no description: the level means drop everything now, so the task says what
+ * leaving it unfixed costs, whatever `register.requireDescription` says.
+ */
+export const BLOCKER_WHY = 'a blocker needs --description saying what it costs left unfixed: a terrible bottleneck, irreversible damage or an important operation blocked';
+
+/** The refusal of a blocker that waits on another task: that is a plain dependency, which stays a wait at p0 or lower. */
+function blockerWaitText(id: string, other: string): string {
+  return `a blocker is fixed now, never after another task: ${id} waiting on ${other} is a plain wait, so give it p0 or lower, or make ${other} the blocker`;
+}
+
+/** Why `fields` cannot be a blocker: no description, or a plan after another task, or a task wait it already holds. */
+function blockerProblem(task: Task | null, fields: Pick<TaskFields, 'priority' | 'description' | 'after'>): string | undefined {
+  if (fields.priority !== BLOCKER_PRIORITY_ID) {
+    return undefined;
+  }
+  if (fields.description === null) {
+    return BLOCKER_WHY;
+  }
+  const id = task?.id ?? 'the task';
+  const planned = fields.after[0];
+  if (planned !== undefined) {
+    return blockerWaitText(id, planned);
+  }
+  const waited = task?.status === 'waiting' ? task.waits.find((wait): wait is Extract<WaitReason, { readonly kind: 'task' }> => wait.kind === 'task') : undefined;
+  return waited === undefined ? undefined : blockerWaitText(id, waited.id);
+}
+
+/** The refusal of an `add` with no description while `register.requireDescription` is on. */
+export const DESCRIPTION_NEEDED = 'add needs --description "<what and why, in plain words>"';
+
+/** How a card is typed, for the refusals that ask for one. */
+export const CARD_USAGE = `--question "<what is decided>" --options "<one choice, its numbers> ${OPTION_SEPARATOR} <another>" --recommend "<which, and why>" --default "<what happens with no answer by the due date>"`;
+
+/** How `--waits` is typed, for the refusals that ask for it. */
+export const WAITS_USAGE = 'decision:<who>, approval:<who>, task:T<id> or time:<YYYY-MM-DD HH:MM>, comma-separated';
+
+/** How a verifying task names when its proof runs (T1306), for the refusals that ask for it. */
+export const PROOF_WAITS_USAGE = 'time:<YYYY-MM-DD HH:MM> when it runs, or task:T<id> for a task in progress or verifying, or an open one of your own, whose end runs it';
+
+/** The statuses of a task a proof may wait on: one under way, whose end runs the proof. */
+const PROOF_TASK_STATUSES: readonly TaskStatus[] = ['in-progress', 'verifying'];
+
+export interface UpdateChange {
+  readonly changes: Partial<TaskFields>;
+  readonly note: string | null;
+}
+
+/** The fields a confirmed sweep row writes. */
+export type TriageChanges = Partial<Pick<TaskFields, 'workClass' | 'goals' | 'size'>>;
+
+/** An answer to an approval wait: an update that changes no field, with the lead's verdict and its note. */
+export interface ApprovalChange extends UpdateChange {
+  readonly verdict: ApprovalVerdict;
+}
+
+/** A Later (T1295): an update that changes no field, with what the owner said and the task's waits from then on. */
+export interface DeferChange extends UpdateChange {
+  readonly waits: readonly WaitReason[];
+}
+
+/** A Decided (T1366): an update that changes no field, with what the owner decided and the waits left without the owner's. */
+export interface DecideChange extends DeferChange {
+  readonly decided: true;
+}
+
+/** An owner's action from the pane (T1298): an update written as `by`, the team's register.ownerSource. */
+export interface OwnerChange extends UpdateChange {
+  readonly by: string;
+}
+
+/** The owner's answer to a card from the pane (T4078): one of its options by its number (from 1), or yes or no to an approval. */
+export type OwnerAnswer = { readonly kind: 'option'; readonly option: number } | { readonly kind: 'approve' } | { readonly kind: 'decline' };
+
+/**
+ * An audit: an update that changes no field and pins either a hand step file for the task at its sha256 (T2312) or
+ * the security reviewer's verdict on the task's card, with the card parts it read (T2761).
+ */
+export type AuditChange = (UpdateChange & { readonly audit: AuditPin }) | (UpdateChange & { readonly securityVerdict: SecurityVerdictPin });
+
+/** What an audit reads: a hand step file pinned at its sha256, or the task's card, with the reviewer's verdict on it. */
+export type AuditSubject = { readonly kind: 'file'; readonly pin: AuditPin } | { readonly kind: 'verdict'; readonly text: string };
+
+/** How the refusals about an audit name what it reads, and the core rule behind it. */
+const AUDITED: Readonly<Record<AuditSubject['kind'], { readonly own: string; readonly other: (owner: string) => string; readonly rule: string }>> = {
+  file: { own: 'audit its own hand step', other: (owner) => `audit a hand step of ${owner}'s`, rule: 'core rule 11' },
+  verdict: { own: 'give the security verdict on its own card', other: (owner) => `give the security verdict on a card of ${owner}'s`, rule: 'core rule 9' },
+};
+
+function ok<T>(value: T): Verdict<T> {
+  return { ok: true, value };
+}
+
+function refuse<T>(error: string): Verdict<T> {
+  return { ok: false, error };
+}
+
+/** Why a task's source is refused, or undefined when it is fine. */
+type SourceRule = (source: string) => string | undefined;
+
+/** An import's source rule: its tasks carry its own source, which it sets itself. */
+function importSource(expected: ImportSource): SourceRule {
+  return (source) => (source === expected ? undefined : `source ${source} is not ${expected}`);
+}
+
+export class RegisterPolicy {
+  private readonly config: KitConfig;
+  private readonly secrets: SecretScanner;
+  private readonly tree: LeadTree;
+
+  /** `above`: the parent team's lead, on a child team, who approves the lead's own work (T1140). */
+  constructor(config: KitConfig, above?: SessionAddress) {
+    this.config = config;
+    this.secrets = new SecretScanner(config.register.secretPatterns);
+    this.tree = new LeadTree(config, above);
+  }
+
+  /**
+   * The approvers of the owner's task in words: the lead alone, or its leaders up the tree, nearest first (T781); for a
+   * child team's lead, the parent team's lead (T1140).
+   */
+  private approversText(owner: string): string {
+    const approvers = this.tree.approversOf(owner);
+    if (approvers.length > 1) {
+      return `a leader above ${owner} (${approvers.join(' or ')})`;
+    }
+    const [only] = approvers;
+    return only !== undefined && only === this.tree.above ? `the parent team's lead (${only})` : `the lead (${this.config.roles.lead})`;
+  }
+
+  /** Who answers a `kind` wait on the owner's task in words: its approvers, and the security reviewer too when it answers one. */
+  private answerersText(owner: string, kind: PersonWaitKind): string {
+    const leaders = this.tree.approversOf(owner);
+    const reviewer = waitAnswerersOf(this.tree, this.config.roles, owner)[kind].find((who) => !leaders.includes(who));
+    const approvers = this.approversText(owner);
+    return reviewer === undefined ? approvers : `${approvers} or the security reviewer (${reviewer})`;
+  }
+
+  /** The caller must be on the roster before writing anything. */
+  checkCaller(session: string): string | undefined {
+    return this.config.sessions.includes(session)
+      ? undefined
+      : `${session} is not a session on this team (sessions: ${this.config.sessions.join(', ')})`;
+  }
+
+  /**
+   * `elsewhere`: the tasks the team tree's other registers hold, which `--after` may name. `goalTags`: the tags of the
+   * goal records of the team and every team above it, which a goal tag must be under `register.goals` checked or
+   * required; under required, an owner-asked or p0/p1 task also names its goal or says it serves none (T1730).
+   */
+  add(input: AddInput, state: RegisterState, elsewhere: TasksElsewhere = NO_TASKS_ELSEWHERE, goalTags: ReadonlySet<string> = NO_GOAL_TAGS): Verdict<TaskFields> {
+    return this.withNamedGoal(this.create(input, state, (source) => this.teamSourceProblem(source), elsewhere, goalTags));
+  }
+
+  /**
+   * A task a session of another team in the tree asks of this team (T1141): its source is the asker's `<team>/<id>`,
+   * and any session of this team may own it, as for a task of the team's own. Its goal tags are held to this team's
+   * goal records and those above it, as on `add`; naming a goal is left to the asking team's own rule.
+   */
+  addFromTeam(input: AddInput, state: RegisterState, elsewhere: TasksElsewhere = NO_TASKS_ELSEWHERE, goalTags: ReadonlySet<string> = NO_GOAL_TAGS): Verdict<TaskFields> {
+    return this.create(input, state, (source) => (ADDRESS_PATTERN.test(source) ? undefined : `source ${source} is not the asking session's <team>/<id>`), elsewhere, goalTags);
+  }
+
+  /**
+   * An owner's order that a lead of a team above relays into this team (T2314): its source is this team's
+   * register.ownerSource, so it stands here as the owner's own ask, and as one it names its goal under register.goals
+   * required, as on `add`. Who may relay is the tree's rule, which the caller checks; any other source is refused, so
+   * this never stands in for addFromTeam.
+   */
+  relayFromTeam(input: AddInput, state: RegisterState, elsewhere: TasksElsewhere = NO_TASKS_ELSEWHERE, goalTags: ReadonlySet<string> = NO_GOAL_TAGS): Verdict<TaskFields> {
+    const { ownerSource } = this.config.register;
+    const sourceRule: SourceRule = (source) => (source === ownerSource ? undefined : `source ${source} is not ${ownerSource}: a relayed task is ${ownerSource}'s order`);
+    return this.withNamedGoal(this.create(input, state, sourceRule, elsewhere, goalTags));
+  }
+
+  /** The created task, refused when register.goals required wants it to name its goal and it names none. */
+  private withNamedGoal(created: Verdict<TaskFields>): Verdict<TaskFields> {
+    const unnamed = created.ok ? this.unnamedGoalProblem(created.value) : undefined;
+    return unnamed === undefined ? created : refuse(unnamed);
+  }
+
+  private create(input: AddInput, state: RegisterState, sourceRule: SourceRule, elsewhere: TasksElsewhere, goalTags: ReadonlySet<string>): Verdict<TaskFields> {
+    const fields: TaskFields = {
+      title: input.title.trim(),
+      description: blankToNull(input.description),
+      owner: input.owner,
+      source: input.source,
+      ref: input.ref ?? null,
+      priority: input.priority,
+      due: input.due ?? null,
+      goals: input.goals ?? [],
+      noGoal: input.noGoal ?? false,
+      week: input.week ?? null,
+      after: input.after ?? [],
+      size: input.size ?? null,
+      type: input.type ?? null,
+      critical: input.critical ?? false,
+      pin: null,
+      // A leader exempts a task with `update` once it exists, as it marks what one prepares.
+      exempt: null,
+      workClass: this.classSpelling(input.workClass ?? null),
+      // A lead marks what a task prepares with `update` once it exists, where the policy knows who marks it.
+      prepares: null,
+    };
+    if (fields.description === null && this.config.register.requireDescription) {
+      return refuse(DESCRIPTION_NEEDED);
+    }
+    const problem = this.checkFields(fields, sourceRule) ?? blockerProblem(null, fields) ?? afterProblem(null, fields.after, state, elsewhere) ?? this.goalProblem(fields.goals, goalTags);
+    if (problem !== undefined) {
+      return refuse(problem);
+    }
+    const duplicate = activeDuplicate(fields.title, state);
+    return duplicate === undefined ? ok(fields) : refuse(`${duplicate.id} already tracks this (${duplicate.status}, owner ${duplicate.owner})`);
+  }
+
+  /**
+   * The task `set <id> --status waiting --ask <session> --text "<the work>"` creates, which `task` then waits on: the
+   * asked session's, from the caller, at `task`'s priority and with its goals or none (the work serves the same plan), its
+   * description naming `task`. Only the owner asks for its task, only with `waiting` (the asked task starts open, and
+   * a proof waits only on a task in progress or verifying, T1306) and only once started: one not started keeps its
+   * status, planned after the asked task. An active task of the same title is waited on instead.
+   */
+  ask(task: Task, caller: string, ask: AskInput, input: StatusInput, state: RegisterState): Verdict<TaskFields> {
+    if (caller !== task.owner) {
+      return refuse(ownerOnly(task));
+    }
+    if (input.status === 'verifying') {
+      return refuse(
+        `--ask goes only with --status waiting: the asked task starts open, and a proof waits only on a task in progress or verifying, so ${task.id} waits on it until it starts (teamrig set ${task.id} --status waiting --ask ${ask.owner} --text "${ask.title}")`,
+      );
+    }
+    if (input.status !== 'waiting') {
+      return refuse('--ask goes only with --status waiting');
+    }
+    if (!hasStarted(task)) {
+      return refuse(
+        `${task.id} has not started, so it does not wait: ask with teamrig add --owner ${ask.owner} --title "${ask.title}", then plan ${task.id} after that task (teamrig update ${task.id} --after <its id>)`,
+      );
+    }
+    const duplicate = activeDuplicate(ask.title, state);
+    if (duplicate !== undefined) {
+      return refuse(`${duplicate.id} already tracks this (${duplicate.status}, owner ${duplicate.owner}): wait on it with --waits task:${duplicate.id}`);
+    }
+    const asked: AddInput = {
+      title: ask.title,
+      description: `Asked by ${caller} for ${task.id} (${task.title}), which waits on this task.`,
+      owner: ask.owner,
+      source: caller,
+      priority: task.priority,
+      goals: task.goals,
+      noGoal: task.noGoal,
+      ...(ask.due === undefined ? {} : { due: ask.due }),
+    };
+    // The asked task carries the goals of the task that waits on it, held to the goal records when they were named.
+    return this.create(asked, state, (source) => this.teamSourceProblem(source), NO_TASKS_ELSEWHERE, new Set(task.goals));
+  }
+
+  setStatus(task: Task, caller: string, input: StatusInput, context: StatusContext): Verdict<StatusChange> {
+    if (caller !== task.owner) {
+      return refuse(ownerOnly(task));
+    }
+    if (input.oneCommit === true && input.status !== 'in-progress') {
+      return refuse('--one-commit goes only with --status in-progress');
+    }
+    const { register } = this.config;
+    // A start waits for the proof of the shipped changes it builds on, unless it names what shows that proof exists
+    // (`--met`), which the CLI asks their owners to confirm; `warn` lets it through and the CLI warns.
+    const holds = startHolds(task, input.status, context.state.tasks);
+    const met = blankToNull(input.met);
+    if (met !== null && holds.length === 0) {
+      return refuse('--met goes only with a start that a verifying task it needs holds');
+    }
+    if (holds.length > 0 && met === null && register.verifyGate === 'refuse') {
+      const ids = holds.map((held) => held.id);
+      const done = `${ids.join(' and ')} ${ids.length === 1 ? 'is' : 'are'} done`;
+      return refuse(`${heldStart(task, holds)}; start ${task.id} once ${done}, or with --met "<what shows the proof exists>"`);
+    }
+    // New work also waits for its owner's own verify steps that are due, so shipped changes get proven, not piled up.
+    const dueVerify = dueStartHolds(task, input.status, context.state.tasks, context.now, context.zone, register.maxVerifying, context.elsewhere);
+    if (dueVerify.length > 0 && register.verifyGate === 'refuse') {
+      return refuse(dueVerifyHold(task, dueVerify));
+    }
+    // Ranked work goes first and work in progress stays few (T2076); `warn` lets the start through and the CLI warns.
+    const { focus } = this.config;
+    const moves = waitContext(context.state.tasks, context.now, context.zone, context.elsewhere);
+    const wip = wipHold({ ...input, task, goals: context.goals }, context.state.tasks.values(), moves, focus, register.ownerSource);
+    if (wip !== undefined && focus.wip.mode === 'refuse') {
+      return refuse(wip);
+    }
+    // A blocker is fixed before anything else its owner starts (T4329): no mode and no --one-commit way past.
+    const blocker = blockerHold(task, input.status, context.state.tasks.values(), moves);
+    if (blocker !== undefined) {
+      return refuse(blocker);
+    }
+    const note = blankToNull(input.note);
+    const evidence = blankToNull(input.evidence);
+    const skill = blankToNull(input.skill);
+    const waits = this.checkWaits(task, input, context);
+    if (!waits.ok) {
+      return waits;
+    }
+    const dropped = approvalDropProblem(task, input, waits.value);
+    if (dropped !== null) {
+      return refuse(dropped);
+    }
+    // A proof put off to other waits again and again is never run: past the limit the task is proven or reopened.
+    if (register.maxReparks > 0 && task.reparks >= register.maxReparks && isRepark(task, input.status, waits.value)) {
+      return refuse(
+        `${task.id}'s proof was put off to other waits ${task.reparks} times [register.maxReparks]: run the proof now and set it done, close it done with ${WATCH_USAGE} if tests or a dry run proved it, or reopen it (teamrig set ${task.id} --status in-progress)`,
+      );
+    }
+    const card = this.cardChange(task, input, waits.value);
+    if (!card.ok) {
+      return card;
+    }
+    const proof = proofChange(task, input);
+    if (!proof.ok) {
+      return proof;
+    }
+    const watch = watchChange(input);
+    if (!watch.ok) {
+      return watch;
+    }
+    const due = dueChange(task, input);
+    if (!due.ok) {
+      return due;
+    }
+    const givesReview = reviewTexts(input.review ?? {}).length > 0;
+    const same = !givesReview && proof.value === task.proof && watch.value === task.watch && due.value === null && sameWaits(waits.value, task.waits) && sameCard(card.value, task.card);
+    if (input.status === task.status && note === null && same) {
+      return refuse(`${task.id} is already ${task.status}; add --note to record why you set it again`);
+    }
+    if (register.requireNoteOn.includes(input.status) && note === null) {
+      return refuse(input.status === 'verifying' && !register.requireProofOnVerifying ? 'verifying needs --note saying what proves it' : `${input.status} needs --note`);
+    }
+    if (input.status === 'verifying' && register.requireProofOnVerifying && proof.value === null) {
+      return refuse('verifying needs --proof saying what will prove the shipped change works');
+    }
+    // A proof with no time or task to run on is put off without end, so verifying names when it runs (T1306); a
+    // change whose proof left is a sighting has neither, so the refusal names --watch.
+    if (input.status === 'verifying' && register.requireProofOnVerifying && !waits.value.some(runsProof)) {
+      return refuse(
+        `verifying needs --waits saying when its proof runs: ${PROOF_WAITS_USAGE}; if tests or a dry run proved it and its proof is a sighting, close it done with ${WATCH_USAGE} instead`,
+      );
+    }
+    if (input.status === 'done') {
+      if (register.requireEvidenceOnDone && evidence === null && task.evidence === null) {
+        return refuse('done needs --evidence: a commit, test count, path or number that proves it');
+      }
+      // A watch stands in for the live proof only on the tests or dry run that proved the change, so it names them.
+      if (watch.value !== null && evidence === null && task.evidence === null) {
+        return refuse('--watch needs --evidence: the tests or dry run that proved the change');
+      }
+      if (register.requireSkillOnDone && skill === null) {
+        return refuse(`done needs --skill <name> (the skill written or updated) or --skill ${NO_SKILL}`);
+      }
+      if (skill !== null && skill !== NO_SKILL && !context.skillExists) {
+        return refuse(`no skill named ${skill}; write it first or use --skill ${NO_SKILL}`);
+      }
+    } else if (skill !== null) {
+      return refuse('--skill goes only with done');
+    }
+    const followups = this.checkFollowups(task, input, context);
+    if (!followups.ok) {
+      return followups;
+    }
+    const review = this.checkReview(task, input, context);
+    if (!review.ok) {
+      return review;
+    }
+    // A missed part's follow-up (the test, monitor or log it adds) joins the tasks the work leaves.
+    const missed = review.value === null ? [] : missedTaskIds(review.value).filter((id) => id !== task.id);
+    const leaves = followups.value === null && missed.length === 0 ? null : [...new Set([...(followups.value ?? []), ...missed])];
+    const texts: readonly [string, string | null][] = [
+      ['note', note],
+      ['evidence', evidence],
+      ['proof', proof.value],
+      ['watch', watch.value],
+      ['met', met],
+      ...(card.value === null ? [] : cardTexts(card.value).map((text): [string, string] => ['card', text])),
+      ...(review.value === null ? [] : reviewTexts(review.value).map(([flag, text]): [string, string] => [flag.slice(2), text])),
+    ];
+    const problem = texts.map(([name, text]) => this.checkText(name, text)).find((found) => found !== undefined);
+    const change: StatusChange = {
+      status: input.status,
+      note,
+      evidence,
+      skill,
+      ...(waits.value.length > 0 ? { waits: waits.value } : {}),
+      ...(card.value === null ? {} : { card: card.value }),
+      ...(proof.value === null ? {} : { proof: proof.value }),
+      ...(watch.value === null ? {} : { watch: watch.value }),
+      ...(met === null ? {} : { met }),
+      ...(input.oneCommit === true ? { oneCommit: true } : {}),
+      ...(due.value === null ? {} : { due: due.value }),
+      ...(leaves === null ? {} : { followups: leaves }),
+      ...(review.value === null ? {} : { review: review.value }),
+    };
+    return problem === undefined ? ok(change) : refuse(problem);
+  }
+
+  /**
+   * The review parts a status change gives (review.ts): only on a bug, each saying enough, and each
+   * task a missed part names on the list. A bug reaching a `register.review.requireOn` status with parts still
+   * missing is refused while the review's mode is `refuse`; `warn` lets it through and the CLI names them. Null when
+   * the change gives none.
+   */
+  private checkReview(task: Task, input: StatusInput, context: StatusContext): Verdict<ProblemReview | null> {
+    const given = input.review ?? {};
+    const [first] = reviewTexts(given);
+    if (first !== undefined && !asksReview(task)) {
+      return refuse(`${first[0]} goes only with a ${reviewedTypes()}: mark it first, teamrig update ${task.id} --type ${reviewedTypes()}`);
+    }
+    const problem = reviewProblem(given);
+    if (problem !== undefined) {
+      return refuse(problem);
+    }
+    const unlisted = missedTaskIds(given).find((id) => !context.state.tasks.has(id));
+    if (unlisted !== undefined) {
+      return refuse(`a missed part names ${unlisted}, which is not on the task list: add it first (teamrig add)`);
+    }
+    const { review } = this.config.register;
+    const missing = reviewGap(task, input.status, given, review);
+    if (missing.length > 0 && review.mode === 'refuse') {
+      return refuse(reviewGapText(task, input.status, missing));
+    }
+    return ok(first === undefined ? null : given);
+  }
+
+  /**
+   * The follow-ups a status change names: required on the statuses `register.requireFollowupsOn` lists, allowed
+   * only on FOLLOWUP_STATUSES, each another task on the list, or on another register of the team tree, and named
+   * once; null when the change names none.
+   */
+  private checkFollowups(task: Task, input: StatusInput, context: StatusContext): Verdict<readonly string[] | null> {
+    const { followups } = input;
+    if (followups === undefined) {
+      return this.config.register.requireFollowupsOn.includes(input.status)
+        ? refuse(`${input.status} needs --followups T<id>,... naming the tasks this work leaves (a finding, a next step), or --followups none`)
+        : ok(null);
+    }
+    if (!FOLLOWUP_STATUSES.includes(input.status)) {
+      return refuse(`--followups goes only with ${FOLLOWUP_STATUSES.join(', ')}`);
+    }
+    for (const [index, id] of followups.entries()) {
+      if (id === task.id) {
+        return refuse(`--followups names ${id} itself: name the tasks it leaves`);
+      }
+      if (followups.indexOf(id) !== index) {
+        return refuse(`--followups names ${id} twice`);
+      }
+      if (!context.state.tasks.has(id) && !context.elsewhere.has(id)) {
+        return refuse(`--followups names ${id}, which is not on the task list: add it first (teamrig add)`);
+      }
+    }
+    return ok(followups);
+  }
+
+  /**
+   * The reasons of a status change, each given one judged: at least one for `waiting`; for `verifying`, what its proof
+   * waits for, where a verifying task set again without `--waits` keeps the reasons it had (a new verify-by date leaves
+   * them in place), none cleared while `register.requireProofOnVerifying` is on; none for any other status.
+   */
+  private checkWaits(task: Task, input: StatusInput, context: StatusContext): Verdict<readonly WaitReason[]> {
+    if (!WAIT_STATUSES.includes(input.status)) {
+      return (input.waits ?? []).length === 0 ? ok([]) : refuse(`--waits goes only with --status ${WAIT_STATUSES.join(' or ')}`);
+    }
+    if (input.waits === undefined && input.status === 'verifying') {
+      const kept = task.status === 'verifying' ? task.waits : [];
+      const cleared = this.config.register.requireProofOnVerifying ? clearedProofWait(task, kept, context) : undefined;
+      return cleared === undefined ? ok(kept) : refuse(cleared);
+    }
+    const waits = input.waits ?? [];
+    if (input.status === 'waiting' && waits.length === 0) {
+      return refuse(`waiting needs --waits saying what it waits for: ${WAITS_USAGE}`);
+    }
+    const twice = waits.find((reason, index) => waits.findIndex((other) => sameWait(reason, other)) !== index);
+    if (twice !== undefined) {
+      return refuse(`--waits names ${waitSpelling(twice)} twice`);
+    }
+    const problem = waits.map((reason) => this.waitProblem(task, input.status, reason, context)).find((found) => found !== undefined);
+    return problem === undefined ? ok(waits) : refuse(problem);
+  }
+
+  /**
+   * The card a status change writes (card.ts): none without a wait on a decision or an approval, where the card
+   * flags are refused; the parts given over the card the task had while waiting, so one part can change alone; or,
+   * with none given, that card. A wait on the owner's decision or approval needs a card while
+   * `register.requireDecisionCard` is on, so the owner decides from it alone (T514). `--why-ask` goes only on a
+   * task the owner ordered that waits on the owner, and a card keeps it only while that holds (T802); while cards
+   * are required, such a task asks the owner only with it (ownerOrderCard). `--gate` goes only with a wait on the
+   * owner's decision, naming an owner gate or business, and a card keeps it only while that holds (T1194); while
+   * cards are required, the owner is asked to decide only with it (gatedCard). `--run` hands the owner a hand step
+   * file only while an audit pins it (runProblem), and a card keeps it only while it asks the owner (T2312).
+   * `--affects` goes only with a wait on the owner's decision or approval, and a card keeps it only while that holds;
+   * while cards are required, a card asking the owner about a test, measure or proof asks only with it (proofCard, T2623).
+   */
+  private cardChange(task: Task, input: StatusInput, waits: readonly WaitReason[]): Verdict<DecisionCard | null> {
+    const asks = waits.filter((reason): reason is PersonWait => reason.kind === 'decision' || reason.kind === 'approval');
+    const { ownerSource, requireDecisionCard } = this.config.register;
+    const owners = asks.filter((reason) => reason.who === ownerSource);
+    const runProblem = input.run === undefined ? undefined : this.runProblem(task, input.run, owners.length > 0);
+    if (runProblem !== undefined) {
+      return refuse(runProblem);
+    }
+    const given = input.run === undefined ? input.card : { ...input.card, run: input.run.path };
+    if (asks.length === 0) {
+      return given === undefined ? ok(null) : refuse(`${CARD_FLAGS} go only with --status ${WAIT_STATUSES.join(' or ')} on a decision or an approval`);
+    }
+    const ordered = task.source === ownerSource && owners.length > 0;
+    const decidesOwner = owners.some((reason) => reason.kind === 'decision');
+    if (given?.whyAsk !== undefined && !ordered) {
+      return refuse(`${WHY_ASK_FLAG} says why ${ownerSource} is asked about what ${ownerSource} ordered: it goes only with a wait on ${ownerSource}'s decision or approval of a task from ${ownerSource}`);
+    }
+    if (given?.affects !== undefined && owners.length === 0) {
+      return refuse(`${AFFECTS_FLAG} says what a test, measure or proof asks ${ownerSource} for: it goes only with a wait on ${ownerSource}'s decision or approval`);
+    }
+    if (given?.gate !== undefined && !decidesOwner) {
+      return refuse(`${GATE_FLAG} names the owner gate or business decision that makes a question ${ownerSource}'s: it goes only with a wait on ${ownerSource}'s decision`);
+    }
+    const gate = given?.gate === undefined ? undefined : gateOf(given.gate, this.config.ownerGates);
+    if (given?.gate !== undefined && gate === undefined) {
+      return refuse(`${GATE_FLAG} "${given.gate}" is no owner gate [ownerGates] and no business decision: ${gateUsage(this.config.ownerGates)}`);
+    }
+    const kept = WAIT_STATUSES.includes(task.status) ? task.card : null;
+    const before = kept === null ? null : keptCard(kept, { whyAsk: ordered, gate: decidesOwner, run: owners.length > 0, affects: owners.length > 0 });
+    if (given === undefined) {
+      if (before !== null || owners.length === 0 || !requireDecisionCard || ordered) {
+        return this.ownerAsk(task, owners, before);
+      }
+      const kinds = owners.map((reason) => reason.kind).join(' and ');
+      return refuse(`a wait on ${ownerSource}'s ${kinds} needs a card, so ${ownerSource} decides from it alone: ${CARD_USAGE}${decidesOwner ? ` ${gateUsage(this.config.ownerGates)}` : ''}`);
+    }
+    const parts: Partial<DecisionCard> = { ...before, ...given, ...(gate === undefined ? {} : { gate }) };
+    if (parts.question === undefined || parts.recommend === undefined || parts.byDefault === undefined) {
+      return refuse(`a card needs ${CARD_FLAGS} (--options for a decision): ${CARD_USAGE}`);
+    }
+    const card: DecisionCard = {
+      question: parts.question,
+      options: parts.options ?? [],
+      recommend: parts.recommend,
+      byDefault: parts.byDefault,
+      ...(parts.whyAsk === undefined ? {} : { whyAsk: parts.whyAsk }),
+      ...(parts.gate === undefined ? {} : { gate: parts.gate }),
+      ...(parts.run === undefined ? {} : { run: parts.run }),
+      ...(parts.affects === undefined ? {} : { affects: parts.affects }),
+      ...(parts.security === true ? { security: true } : {}),
+    };
+    const problem = cardProblem(card, asks.some((reason) => reason.kind === 'decision'));
+    return problem === undefined ? this.ownerAsk(task, owners, card) : refuse(problem);
+  }
+
+  /**
+   * Why a card may not hand the owner the hand step file `run` names (T2312, core rule 11): it goes only with a wait
+   * on the owner's decision or approval (`asksOwner`), never a leader's approval, as the owner is who runs it; only as
+   * a file of a kind with a run line; and only while an audit on the task pins that file at the sha256 the CLI read now.
+   */
+  private runProblem(task: Task, run: AuditPin, asksOwner: boolean): string | undefined {
+    const { ownerSource } = this.config.register;
+    if (!asksOwner) {
+      return `${RUN_FLAG} hands ${ownerSource} a hand step to run: it goes only with a wait on ${ownerSource}'s decision or approval`;
+    }
+    const kindProblem = handStepFileProblem(run.path);
+    if (kindProblem !== undefined) {
+      return kindProblem;
+    }
+    const audit = auditOf(task.audits, run.path);
+    if (audit === undefined) {
+      return `no audit on ${task.id} pins ${run.path}: a hand step goes to ${ownerSource} only as a file its auditor read (core rule 11); who audits it: ${this.auditorsText(task.owner)}, with teamrig audit ${task.id} --file ${run.path}`;
+    }
+    if (audit.sha256 !== run.sha256) {
+      return `${run.path} changed since ${audit.by} audited it at sha256 ${shortSha256(audit.sha256)} (now ${shortSha256(run.sha256)}): an edit needs a new audit (core rule 11)`;
+    }
+    return undefined;
+  }
+
+  /**
+   * What a card asking the owner (`owners`) must say besides its parts, and must not: no hand step in its text
+   * (typedStepProblem); what it changes, on a test, measure or proof (proofProblem); the security verdict on it, on a
+   * security gate (securityProblem); why, on an owner's order; its gate, on a decision.
+   */
+  private ownerAsk(task: Task, owners: readonly PersonWait[], card: DecisionCard | null): Verdict<DecisionCard | null> {
+    const problem =
+      owners.length === 0 || card === null ? undefined : (this.typedStepProblem(task, card) ?? this.proofProblem(task, owners, card) ?? this.securityProblem(task, card));
+    if (problem !== undefined) {
+      return refuse(problem);
+    }
+    const ordered = this.ownerOrderCard(task, owners, card);
+    return ordered.ok ? this.gatedCard(task, owners, card) : ordered;
+  }
+
+  /**
+   * Why a card asking the owner may not say what it says (T2312, core rule 11): a hand step goes to the human only as
+   * a file its auditor read, so a card that types one into a part, as code or an ask to paste, is refused unless it
+   * hands the step as its run file. A card kept from an older row is held to it too, as it still reaches the owner.
+   */
+  private typedStepProblem(task: Task, card: DecisionCard): string | undefined {
+    const typed = typedHandStep(card);
+    if (typed === undefined) {
+      return undefined;
+    }
+    const { ownerSource } = this.config.register;
+    return (
+      `${typed.flag} hands ${ownerSource} a step as text (${typed.shape}): core rule 11 hands ${ownerSource} a step only as a file its auditor read. ` +
+      `Write the step to a ${HAND_STEP_KINDS.join(', ')} file, have it audited (${this.auditorsText(task.owner)}, with teamrig audit ${task.id} --file <path>) and give ${RUN_FLAG} <path>; ` +
+      `a card that hands no step says so without code or an ask to paste ("the line is in")`
+    );
+  }
+
+  /**
+   * A security-related ask reaches the owner only with the security reviewer's verdict on its card (T2761, core rule
+   * 9): a card asking the owner to decide on a gate in `securityGates`, or one marked `security` on any wait on the
+   * owner, is refused while the task holds no verdict, or one given on another question, options or recommendation
+   * (verdictIsCurrent). A card handing a hand step (`run`) is
+   * reviewed already, as its audit is the reviewer's read of it (runProblem). A card kept from an older row is held to
+   * it too, as it still reaches the owner. The reviewer reads the card before the owner does, so the card goes first
+   * on a wait on the session's leader, and keeps its parts when the wait moves to the owner.
+   */
+  private securityProblem(task: Task, card: DecisionCard): string | undefined {
+    const gate = card.gate?.toLowerCase();
+    const gated = gate !== undefined && this.config.securityGates.some((security) => security.toLowerCase() === gate);
+    if (card.run !== undefined || (!gated && card.security !== true)) {
+      return undefined;
+    }
+    const verdict = task.securityVerdict;
+    if (verdict !== null && verdictIsCurrent(verdict, card)) {
+      return undefined;
+    }
+    const { ownerSource } = this.config.register;
+    const leader = this.leaderOf(task);
+    const first = leader === undefined ? 'set the card on a wait on the security reviewer first' : `set the card on a wait on your leader first (--waits decision:${leader})`;
+    const route = `${first}, have it read (${this.auditorsText(task.owner)}, with teamrig audit ${task.id} --verdict "<what the review found>"), then wait on ${ownerSource} with the card unchanged`;
+    const why =
+      verdict === null
+        ? `${task.id}'s card ${gated ? `asks ${ownerSource} about ${card.gate}, a security gate [securityGates],` : `is marked ${SECURITY_FLAG}`} and has no security verdict: it reaches ${ownerSource} only with one (core rule 9)`
+        : `the security verdict ${verdict.by} gave on ${task.id}'s card read another question, options or recommendation: an edit needs a new verdict (core rule 9)`;
+    return `${why}; ${route}`;
+  }
+
+  /** Who leads the task's owner: its sub-lead or the lead, and for the lead, the parent team's lead; undefined at the root. */
+  private leaderOf(task: Task): string | undefined {
+    return this.tree.leaderOf(task.owner) ?? (task.owner === this.tree.lead ? this.tree.above : undefined);
+  }
+
+  /**
+   * A test, measure or proof of work already approved is approved with it (core rule 6, T2623): while
+   * `register.requireDecisionCard` is on, a card asking the owner whose question is about one (proofWordOf) asks only
+   * with `affects`, the approved number it changes, the money it spends or the data it writes; one that does none of
+   * those goes ahead, and its session tells its leader. A card kept from an older row is held to it too; check flags
+   * rows written before (OWNER-PROOF).
+   */
+  private proofProblem(task: Task, owners: readonly PersonWait[], card: DecisionCard): string | undefined {
+    const { ownerSource, requireDecisionCard } = this.config.register;
+    const word = card.affects === undefined && requireDecisionCard ? proofWordOf(card.question) : undefined;
+    if (word === undefined) {
+      return undefined;
+    }
+    const kinds = owners.map((reason) => reason.kind).join(' and ');
+    const leader = this.leaderOf(task);
+    const tell = leader === undefined ? '' : ` and tell your leader (${leader})`;
+    return (
+      `--question asks ${ownerSource} about a test, measure or proof ("${word}"): one of approved work that changes no approved number, spends no money and writes no data is approved with that work, so go ahead${tell}, and drop the wait on ${ownerSource}'s ${kinds}; ` +
+      `if it does change, spend or write, say which with ${AFFECTS_USAGE}`
+    );
+  }
+
+  /**
+   * Only an owner gate [ownerGates] or a business decision is the owner's to decide (T1194), so while
+   * `register.requireDecisionCard` is on, a wait on the owner's decision needs a card naming its gate; any other
+   * question is the session's or its leader's, however many good answers it has. check flags rows written before
+   * (UNGATED).
+   */
+  private gatedCard(task: Task, owners: readonly PersonWait[], card: DecisionCard | null): Verdict<DecisionCard | null> {
+    const { ownerSource, requireDecisionCard } = this.config.register;
+    if (!requireDecisionCard || card?.gate !== undefined || !owners.some((reason) => reason.kind === 'decision')) {
+      return ok(card);
+    }
+    const leader = this.leaderOf(task);
+    const elsewhere = leader === undefined ? 'decide it' : `decide it, or wait on your leader (--waits decision:${leader})`;
+    return refuse(
+      `only an owner gate or a business decision is ${ownerSource}'s to decide: give ${gateUsage(this.config.ownerGates)}${card === null ? ` with ${CARD_USAGE}` : ''}; any other question is yours however many good answers it has: ${elsewhere}`,
+    );
+  }
+
+  /**
+   * An owner's order approves its own work and proof (rule 6), so while `register.requireDecisionCard` is on, a task
+   * the owner ordered waits on the owner (`owners`) only with a card that says why (`whyAsk`, T802); check flags rows
+   * written before or with the switch off (OWNER-ORDERED).
+   */
+  private ownerOrderCard(task: Task, owners: readonly PersonWait[], card: DecisionCard | null): Verdict<DecisionCard | null> {
+    const { ownerSource, requireDecisionCard } = this.config.register;
+    if (task.source !== ownerSource || owners.length === 0 || !requireDecisionCard || card?.whyAsk !== undefined) {
+      return ok(card);
+    }
+    const kinds = owners.map((reason) => reason.kind).join(' and ');
+    return refuse(`${ownerSource} ordered ${task.id}, and an order approves its own work and proof: drop the wait on ${ownerSource}'s ${kinds}, or give ${whyAskUsage(ownerSource)}${card === null ? ` with ${CARD_USAGE}` : ''}`);
+  }
+
+  private waitProblem(task: Task, status: TaskStatus, reason: WaitReason, context: StatusContext): string | undefined {
+    switch (reason.kind) {
+      case 'decision':
+      case 'approval':
+        return this.personWaitProblem(task, reason);
+      case 'task':
+        if (status === 'waiting' && task.priority === BLOCKER_PRIORITY_ID) {
+          return blockerWaitText(task.id, reason.id);
+        }
+        return taskWaitProblem(task, reason.id, context.state, context.elsewhere) ?? (status === 'verifying' ? unstartedProofTask(task, reason.id, context) : undefined);
+      case 'time':
+        return timeProblem(reason.at, context);
+    }
+  }
+
+  /**
+   * Decision and approval waits are for the task owner's leaders (the lead, and any sub-lead above it; for a child
+   * team's lead, the parent team's lead) and the owner, an approval wait also for the security reviewer, on another's
+   * task (`waitAnswerersOf`): a peer's work is a task, waited on by its id, which clears by itself once that task
+   * finishes, where a peer's decision would hold the task until its owner noticed.
+   */
+  private personWaitProblem(task: Task, reason: PersonWait): string | undefined {
+    const { ownerSource } = this.config.register;
+    if (!isPeerWait(reason, waitAnswerersOf(this.tree, this.config.roles, task.owner), ownerSource)) {
+      return undefined;
+    }
+    const answerers = this.answerersText(task.owner, reason.kind);
+    return this.config.sessions.includes(reason.who)
+      ? `${reason.kind} ${reason.who}: ${reason.kind} waits are for ${answerers} and ${ownerSource}; wait on ${reason.who}'s work by its task: teamrig set ${task.id} --status waiting --ask ${reason.who} --text "<the work you need>"`
+      : `${reason.kind} ${reason.who}: ${reason.who} is neither ${answerers} nor ${ownerSource}`;
+  }
+
+  /**
+   * An answer to a task's approval wait (T684): only a leader above the task's owner answers (the lead, or a sub-lead,
+   * T781; on a child team's lead's task, the parent team's lead, as `<team>/<id>`, T1140), or the security reviewer on
+   * another's task (T828), only a task waiting on its own approval, and always with a note, which the task's owner
+   * reads: what it checked, or why it declines. An approval of the owner's stays the owner's: no lead answers it.
+   */
+  approve(task: Task, caller: string, verdict: ApprovalVerdict, note: string | undefined): Verdict<ApprovalChange> {
+    const { lead } = this.config.roles;
+    if (!waitAnswerersOf(this.tree, this.config.roles, task.owner).approval.includes(caller)) {
+      return refuse(`only ${this.answerersText(task.owner, 'approval')} answers an approval of ${task.owner}'s`);
+    }
+    if (task.status !== 'waiting' || !task.waits.some((reason) => reason.kind === 'approval' && reason.who === caller)) {
+      const whose = caller === lead ? "the lead's" : `${caller}'s`;
+      return refuse(`${task.id} does not wait on ${whose} approval (approval:${caller}); its owner asks with teamrig set ${task.id} --status waiting --waits approval:${caller}`);
+    }
+    const text = blankToNull(note);
+    if (text === null) {
+      return refuse(`an answer needs --note: what you checked, or why you decline`);
+    }
+    const problem = this.checkText('note', text);
+    return problem === undefined ? ok({ changes: {}, note: text, verdict }) : refuse(problem);
+  }
+
+  /**
+   * A Later (T1295): the owner puts off a card, a task's wait on the owner's decision or approval, to time `until`
+   * (stored form), or `null` brings it back now. Its owner or a leader above it records what the owner said, as
+   * {@link deferFrom} judges it.
+   */
+  defer(task: Task, caller: string, until: string | null, note: string | undefined, context: Pick<StatusContext, 'now' | 'zone'>): Verdict<DeferChange> {
+    if (caller !== task.owner && caller !== this.tree.lead && !this.tree.leads(caller, task.owner)) {
+      return refuse(`only the owner (${task.owner}) or ${this.approversText(task.owner)} puts ${task.id} off`);
+    }
+    return this.deferFrom(task, until, note, context);
+  }
+
+  /**
+   * A Later's content, for the lead above who asks the owner this team's decisions too (Register.deferFrom, whose
+   * caller the tree decides): only a task waiting on the owner is put off, always with a note saying what the owner
+   * said, to a time still to come. The time is a time wait beside the owner's, replacing any time wait the task had,
+   * so the latest one still to come is the Later (owner-waits.ts); `null` drops the task's time waits.
+   */
+  deferFrom(task: Task, until: string | null, note: string | undefined, context: Pick<StatusContext, 'now' | 'zone'>): Verdict<DeferChange> {
+    const { ownerSource } = this.config.register;
+    if (!waitsOnOwner(task, ownerSource)) {
+      return refuse(`${task.id} waits on no decision or approval of ${ownerSource}: only such a card is put off`);
+    }
+    const text = blankToNull(note);
+    if (text === null) {
+      return refuse(`a Later needs --note: what ${ownerSource} said`);
+    }
+    const untimed = task.waits.filter((reason) => reason.kind !== 'time');
+    if (until === null && untimed.length === task.waits.length) {
+      return refuse(`${task.id} is not put off: no time to drop`);
+    }
+    const problem = (until === null ? undefined : timeProblem(until, context)) ?? this.checkText('note', text);
+    if (problem !== undefined) {
+      return refuse(problem);
+    }
+    const waits: readonly WaitReason[] = until === null ? untimed : [...untimed, { kind: 'time', at: until }];
+    return ok({ changes: {}, note: text, waits });
+  }
+
+  /**
+   * A Decided (T1366): the owner answered a card, a task's wait on the owner's decision or approval, at the meeting or
+   * in a decision batch. Its owner or a leader above it records the answer, as {@link decideFrom} judges it.
+   */
+  decide(task: Task, caller: string, note: string | undefined): Verdict<DecideChange> {
+    if (caller !== task.owner && caller !== this.tree.lead && !this.tree.leads(caller, task.owner)) {
+      return refuse(`only the owner (${task.owner}) or ${this.approversText(task.owner)} records a decision on ${task.id}`);
+    }
+    return this.decideFrom(task, note);
+  }
+
+  /**
+   * A Decided's content, for the lead above who asks the owner this team's decisions too (Register.decideFrom, whose
+   * caller the tree decides): only a task waiting on the owner is decided, always with a note saying what the owner
+   * decided. The owner's decision and approval waits go; a waiting task's time waits go with them, as a time beside
+   * the owner's wait is a Later (deferFrom), while a verifying task keeps its time and task waits, which say when its
+   * proof runs. The task stays in its status, marked decided (fold.ts), for its session to act on.
+   */
+  decideFrom(task: Task, note: string | undefined): Verdict<DecideChange> {
+    const { ownerSource } = this.config.register;
+    if (!waitsOnOwner(task, ownerSource)) {
+      return refuse(`${task.id} waits on no decision or approval of ${ownerSource}: only such a card is decided`);
+    }
+    const text = blankToNull(note);
+    if (text === null) {
+      return refuse(`a Decided needs --note: what ${ownerSource} decided`);
+    }
+    const problem = this.checkText('note', text);
+    if (problem !== undefined) {
+      return refuse(problem);
+    }
+    const waits = task.waits.filter((reason) => {
+      if (reason.kind === 'decision' || reason.kind === 'approval') {
+        return reason.who !== ownerSource;
+      }
+      return task.status !== 'waiting' || reason.kind !== 'time';
+    });
+    return ok({ changes: {}, note: text, waits, decided: true });
+  }
+
+  /**
+   * The owner's answer to a card from the pane (T4078), written as the owner (register.ownerSource): a Decided whose
+   * note says which option of the card the owner chose, or that the owner approved or declined, judged as
+   * {@link decideFrom} judges one. An option answers a wait on the owner's decision whose card has that option; yes
+   * or no answers a wait on the owner's approval.
+   */
+  ownerDecide(task: Task, answer: OwnerAnswer): Verdict<OwnerChange & DecideChange> {
+    const by = this.config.register.ownerSource;
+    const note = this.ownerAnswerNote(task, answer);
+    if (!note.ok) {
+      return note;
+    }
+    const decided = this.decideFrom(task, note.value);
+    return decided.ok ? ok({ ...decided.value, by }) : decided;
+  }
+
+  /** What the history keeps of the owner's answer: the option chosen by its number and words, or yes or no. */
+  private ownerAnswerNote(task: Task, answer: OwnerAnswer): Verdict<string> {
+    const by = this.config.register.ownerSource;
+    if (!waitsOnOwner(task, by)) {
+      return refuse(`${task.id} waits on no decision or approval of ${by}: only such a card is answered`);
+    }
+    const waitsOn = (kind: PersonWaitKind): boolean => task.waits.some((reason) => reason.kind === kind && reason.who === by);
+    if (answer.kind !== 'option') {
+      if (!waitsOn('approval')) {
+        return refuse(`${task.id} waits on ${by}'s decision, not an approval: answer it with --option <n>`);
+      }
+      return ok(answer.kind === 'approve' ? 'approved' : 'declined');
+    }
+    if (!waitsOn('decision')) {
+      return refuse(`${task.id} waits on ${by}'s approval, not a decision: answer it with --approve or --decline`);
+    }
+    const options = task.card?.options ?? [];
+    const chosen = options[answer.option - 1];
+    if (chosen === undefined) {
+      return refuse(options.length === 0 ? `${task.id}'s card has no options to choose from` : `${task.id}'s card has options 1 to ${options.length}, not ${answer.option}`);
+    }
+    return ok(clipEnd(`chose option ${answer.option} of ${options.length}: ${chosen}`, this.config.register.maxText));
+  }
+
+  /**
+   * The owner's Later from the pane (T4078), written as the owner: the card put off to `until` (stored form), with a
+   * note naming the time on the team's clock, judged as {@link deferFrom} judges one.
+   */
+  ownerLater(task: Task, until: string, context: Pick<StatusContext, 'now' | 'zone'>): Verdict<OwnerChange & DeferChange> {
+    const deferred = this.deferFrom(task, until, `put off until ${storedText(until, context.zone)}`, context);
+    return deferred.ok ? ok({ ...deferred.value, by: this.config.register.ownerSource }) : deferred;
+  }
+
+  /**
+   * Who audits a hand step of the owner's (T2312, core rule 11), never the owner itself: the team's security reviewer
+   * (roles.securityReviewer, a `<team>/<id>` when it sits on a team above), or the reviewer's leaders on the reviewer's
+   * own task. Undefined when the team has no reviewer, or the reviewer owns the task and has no leader but itself (the
+   * root lead): then any session of this team but the owner audits it.
+   */
+  private auditorsOf(owner: string): readonly string[] | undefined {
+    const reviewer = this.config.roles.securityReviewer;
+    if (reviewer === undefined) {
+      return undefined;
+    }
+    if (reviewer !== owner) {
+      return [reviewer];
+    }
+    const leaders = this.tree.approversOf(owner).filter((id) => id !== owner);
+    return leaders.length === 0 ? undefined : leaders;
+  }
+
+  /** The auditors of a hand step of the owner's in words, for the refusals that name them. */
+  private auditorsText(owner: string): string {
+    const reviewer = this.config.roles.securityReviewer;
+    if (reviewer === undefined) {
+      return 'any session of this team but its owner (no roles.securityReviewer is set)';
+    }
+    if (reviewer !== owner) {
+      return ADDRESS_PATTERN.test(reviewer) ? `the security reviewer (${reviewer}), from its own team with --team` : `the security reviewer (${reviewer})`;
+    }
+    return this.auditorsOf(owner) === undefined ? `any session of this team but ${owner}` : `${this.approversText(owner)}, as ${owner} is the security reviewer`;
+  }
+
+  /**
+   * An audit: `caller`, a session of this team, read what `subject` names and pins it for the task: a hand step file
+   * at its sha256, so the task's card may hand it to the owner (T2312, core rule 11), or the task's card with its
+   * security verdict, so a security-related card may reach the owner (T2761, core rule 9). Only an auditor of the
+   * owner's may (auditorsOf), never the task's own owner, as {@link auditFrom} judges the rest.
+   */
+  audit(task: Task, caller: string, subject: AuditSubject, note: string | undefined): Verdict<AuditChange> {
+    if (caller === task.owner) {
+      const audited = AUDITED[subject.kind];
+      return refuse(`${caller} owns ${task.id}, so it does not ${audited.own} (${audited.rule}); who audits it: ${this.auditorsText(task.owner)}`);
+    }
+    const auditors = this.auditorsOf(task.owner);
+    if (auditors !== undefined && !auditors.includes(caller)) {
+      return this.notAuditor(task, caller, subject);
+    }
+    return this.auditContent(task, subject, note);
+  }
+
+  private notAuditor(task: Task, caller: string, subject: AuditSubject): Verdict<AuditChange> {
+    return refuse(`${caller} does not ${AUDITED[subject.kind].other(task.owner)}; who audits it: ${this.auditorsText(task.owner)}`);
+  }
+
+  /**
+   * An audit from a team above (T2312), `asker` being its `<team>/<id>`, as the tree decides: only an auditor of the
+   * owner's that this team's roles name there may. A team with no security reviewer audits its hand steps itself.
+   */
+  auditFrom(task: Task, asker: string, subject: AuditSubject, note: string | undefined): Verdict<AuditChange> {
+    const auditors = this.auditorsOf(task.owner);
+    if (auditors === undefined || !auditors.includes(asker)) {
+      return this.notAuditor(task, asker, subject);
+    }
+    return this.auditContent(task, subject, note);
+  }
+
+  /**
+   * An audit's content: a task still to finish and an optional note; for a file, a hand step file of a kind with a
+   * run line; for a verdict, a card on the task to give it on and a verdict in words, pinned with the card parts read.
+   */
+  private auditContent(task: Task, subject: AuditSubject, note: string | undefined): Verdict<AuditChange> {
+    if (!ACTIVE_STATUSES.includes(task.status)) {
+      return refuse(`${task.id} is ${task.status}: ${subject.kind === 'file' ? 'a hand step' : 'a card'} is audited for a task still to finish`);
+    }
+    const text = blankToNull(note);
+    const noteProblem = this.checkText('note', text);
+    if (noteProblem !== undefined) {
+      return refuse(noteProblem);
+    }
+    if (subject.kind === 'file') {
+      const kindProblem = handStepFileProblem(subject.pin.path);
+      return kindProblem === undefined ? ok({ changes: {}, note: text, audit: subject.pin }) : refuse(kindProblem);
+    }
+    if (task.card === null) {
+      return refuse(`${task.id} has no card: a security verdict is given on the card the owner reads, so its owner sets the card first (${CARD_FLAGS})`);
+    }
+    const verdict = blankToNull(subject.text);
+    if (verdict === null) {
+      return refuse('--verdict is blank: say what the review found and whether the owner may approve it');
+    }
+    const verdictProblem = this.checkText('verdict', verdict);
+    return verdictProblem === undefined ? ok({ changes: {}, note: text, securityVerdict: { text: verdict, read: verdictReadOf(task.card) } }) : refuse(verdictProblem);
+  }
+
+  /**
+   * The owner's Note from the pane (T1298): free text for the task's session, kept in its history as the owner's and
+   * changing no field. A finished task takes none, as its session has moved on.
+   */
+  ownerNote(task: Task, note: string | undefined): Verdict<OwnerChange> {
+    const by = this.config.register.ownerSource;
+    if (!ACTIVE_STATUSES.includes(task.status)) {
+      return refuse(`${task.id} is ${task.status}: ${by}'s Note goes to a task still to finish`);
+    }
+    const text = blankToNull(note);
+    if (text === null) {
+      return refuse(`a Note needs --text: what ${by} tells ${task.owner}`);
+    }
+    const problem = this.checkText('note', text);
+    return problem === undefined ? ok({ by, changes: {}, note: text }) : refuse(problem);
+  }
+
+  /**
+   * The owner's Next from the pane (T1298): the owner's pin, above every other task of the task's owner (the register
+   * moves that owner's earlier pin down). Not on a finished task, one in progress (in hand already), or one the owner
+   * put next already, whose session was told then.
+   */
+  ownerNext(task: Task): Verdict<OwnerChange> {
+    const by = this.config.register.ownerSource;
+    if (!ACTIVE_STATUSES.includes(task.status)) {
+      return refuse(`${task.id} is ${task.status}: only a task still to finish goes next`);
+    }
+    if (task.status === 'in-progress') {
+      return refuse(`${task.id} is in progress: ${task.owner} has it in hand already`);
+    }
+    if (task.pin === by) {
+      return refuse(`${task.id} is next already: ${by} put it there; a Note tells ${task.owner} more`);
+    }
+    return ok({ by, changes: { pin: by }, note: null });
+  }
+
+  /**
+   * `elsewhere`: the tasks the team tree's other registers hold, which `--after` may name. `goalTags`: as on `add`,
+   * which only the goals the update names are held to, so a tag the task had before never blocks another change.
+   */
+  update(
+    task: Task,
+    caller: string,
+    asked: Partial<TaskFields>,
+    note: string | undefined,
+    state: RegisterState,
+    elsewhere: TasksElsewhere = NO_TASKS_ELSEWHERE,
+    goalTags: ReadonlySet<string> = NO_GOAL_TAGS,
+  ): Verdict<UpdateChange> {
+    const changes = clearNoGoal(task, clearCritical(task, trimDescription(asked)));
+    const names = Object.keys(changes).filter((name): name is TaskFieldName => name in changes);
+    const text = blankToNull(note);
+    if (names.length === 0) {
+      // A note alone changes nothing on the task, so any session may add context to any task's history.
+      if (text === null) {
+        return refuse('nothing to change: give a field or a --note');
+      }
+      const problem = this.checkText('note', text);
+      return problem === undefined ? ok({ changes, note: text }) : refuse(problem);
+    }
+    const pinned = changes.pin === undefined ? undefined : this.pinProblem(task.id, changes.owner ?? task.owner, caller, changes.pin);
+    const prepared = changes.prepares === undefined ? undefined : this.prepProblem(task.id, changes.owner ?? task.owner, caller, changes.prepares, goalTags);
+    const exempted = changes.exempt === undefined ? undefined : this.exemptProblem(task.id, changes.owner ?? task.owner, caller, changes.exempt);
+    const marked = pinned ?? prepared ?? exempted;
+    if (marked !== undefined) {
+      return refuse(marked);
+    }
+    if (caller !== task.owner) {
+      const problem = this.leaderUpdateProblem(task, caller, names, changes);
+      if (problem !== undefined) {
+        return refuse(problem);
+      }
+    }
+    return this.fieldChange(task, changes, text, state, elsewhere, goalTags);
+  }
+
+  /** The field rules every update passes, once who may make it is settled. */
+  private fieldChange(task: Task, asked: Partial<TaskFields>, text: string | null, state: RegisterState, elsewhere: TasksElsewhere, goalTags: ReadonlySet<string>): Verdict<UpdateChange> {
+    const changes = asked.workClass === undefined ? asked : { ...asked, workClass: this.classSpelling(asked.workClass) };
+    if (changes.description === null && this.config.register.requireDescription) {
+      return refuse(`${task.id} keeps a description while register.requireDescription is on: give a new one instead of none`);
+    }
+    const merged: TaskFields = { ...pickFields(task), ...changes };
+    // A task keeps the source it was added with, even one from the parent team's lead.
+    const sourceRule: SourceRule = (source) => (source === task.source ? undefined : this.teamSourceProblem(source));
+    const after = changes.after === undefined ? undefined : afterChangeProblem(task, changes.after, state, elsewhere);
+    const goals = changes.goals === undefined ? undefined : this.goalProblem(changes.goals, goalTags);
+    // Only a change to what a blocker rests on is judged, so a blocker added before these rules still takes other edits.
+    const blocker = changes.priority === undefined && changes.after === undefined && changes.description === undefined ? undefined : blockerProblem(task, merged);
+    const problem = after ?? this.checkFields(merged, sourceRule, task) ?? blocker ?? goals ?? this.checkText('note', text);
+    return problem === undefined ? ok({ changes, note: text }) : refuse(problem);
+  }
+
+  /**
+   * A confirmed sweep row (T2086): the task's class, goals and size, from its owner or a leader over it. `goals` is the
+   * one field here a leader's `update` may not touch: a person read this row and said yes, and the sweep is how a
+   * team's leader sorts tasks their owners never tagged, so it is widened here and not in LEAD_FIELDS.
+   */
+  triage(task: Task, caller: string, asked: TriageChanges, state: RegisterState, elsewhere: TasksElsewhere = NO_TASKS_ELSEWHERE, goalTags: ReadonlySet<string> = NO_GOAL_TAGS): Verdict<UpdateChange> {
+    if (caller !== task.owner && caller !== this.tree.lead && !this.tree.leads(caller, task.owner)) {
+      return refuse(`only the owner (${task.owner}) or ${this.approversText(task.owner)} changes ${task.id}`);
+    }
+    return this.triageFrom(task, asked, state, elsewhere, goalTags);
+  }
+
+  /** `triage` for the lead of a team above, whom the tree vetted and no roster here holds, so only the field rules judge it. */
+  triageFrom(task: Task, asked: TriageChanges, state: RegisterState, elsewhere: TasksElsewhere = NO_TASKS_ELSEWHERE, goalTags: ReadonlySet<string> = NO_GOAL_TAGS): Verdict<UpdateChange> {
+    // A row adds to the task's tags and keeps the rest, which a person did not name and which may predate the records.
+    return this.fieldChange(task, clearNoGoal(task, asked), null, state, elsewhere, new Set([...goalTags, ...task.goals]));
+  }
+
+  /**
+   * The spelling `focus.classes` gives `workClass` when it names one in another case, so `--class maintenance` is stored
+   * as `Maintenance` instead of costing a retry (GeneralA6/teamrig#845); else `workClass` as given, for checkFields to judge.
+   */
+  private classSpelling(workClass: string | null): string | null {
+    if (workClass === null || this.config.focus.classes.includes(workClass)) {
+      return workClass;
+    }
+    const lower = workClass.toLowerCase();
+    return this.config.focus.classes.find((name) => name.toLowerCase() === lower) ?? workClass;
+  }
+
+  /** Why `goals` cannot be named under `register.goals` checked or required: one is no tag of `goalTags`. */
+  private goalProblem(goals: readonly string[], goalTags: ReadonlySet<string>): string | undefined {
+    if (this.config.register.goals === 'free') {
+      return undefined;
+    }
+    const unknown = goals.find((goal) => !goalTags.has(goal));
+    return unknown === undefined ? undefined : `goal ${unknown} is not a goal record of the team or a team above: teamrig goal list lists them`;
+  }
+
+  /** Why a new task must name its goal under `register.goals` required: it is owner-asked or p0/p1 and names none. */
+  private unnamedGoalProblem(fields: TaskFields): string | undefined {
+    const { goals, ownerSource } = this.config.register;
+    if (goals !== 'required' || fields.goals.length > 0 || fields.noGoal) {
+      return undefined;
+    }
+    const asked = fields.source === ownerSource ? 'an owner-asked' : isTopPriority(fields.priority) ? `a ${priorityText(fields.priority)}` : undefined;
+    return asked === undefined ? undefined : `${asked} task names its goal: --goals <tag>, or --goals none (register.goals is required)`;
+  }
+
+  /**
+   * Why `caller` may not set the pin of task `id` (`pin`: the session that pins, null to unpin), or undefined when it
+   * may: a pin puts the task above its `owner`'s computed order (the owner it has after the change), so the owner's
+   * leaders set it, the lead on its own tasks too, and never the owner itself; a pin names the session that set it (T637).
+   */
+  private pinProblem(id: string, owner: string, caller: string, pin: string | null): string | undefined {
+    if (caller === owner && caller !== this.tree.lead) {
+      return `${owner} does not pin its own ${id}: ${this.approversText(owner)} pins a task above its owner's order`;
+    }
+    return pin === null || pin === caller ? undefined : `a pin names the session that sets it (${caller}), not ${pin}`;
+  }
+
+  /**
+   * Why `caller` may not set or clear the rest exemption of task `id` (T4948), or undefined when it may: the mark wakes
+   * the task's `owner` past the daily cap and a plain budget cut, so only a leader sets it (the lead, or a sub-lead over
+   * that owner), never the owner itself unless it is the lead, so a session cannot spend past its own hold; the mark
+   * names the leader who set it.
+   */
+  private exemptProblem(id: string, owner: string, caller: string, exempt: string | null): string | undefined {
+    if (caller !== this.tree.lead && !this.tree.leads(caller, owner)) {
+      return `only ${this.approversText(owner)} exempts ${id} from its owner's rest: the mark wakes ${owner} past its budget hold`;
+    }
+    return exempt === null || exempt === caller ? undefined : `an exemption names the session that sets it (${caller}), not ${exempt}`;
+  }
+
+  /**
+   * Why `caller` may not set or clear the prep marker of task `id` (T2453), or undefined when it may: the marker lets a
+   * design for a ranked goal's near slice past the slice cap, so only a lead sets it (the lead, or a sub-lead over the
+   * task's `owner`), never the owner itself unless it is the lead, so a build cannot ride it. A marker names one of
+   * `goalTags`, the goal records of the team and the teams above it, whatever register.goals says: a marker on no goal
+   * would only ever lapse.
+   */
+  private prepProblem(id: string, owner: string, caller: string, prepares: TaskPrep | null, goalTags: ReadonlySet<string>): string | undefined {
+    if (caller !== this.tree.lead && !this.tree.leads(caller, owner)) {
+      return `only ${this.approversText(owner)} marks what ${id} prepares: the marker lets a design run outside the slice cap`;
+    }
+    return prepares === null || goalTags.has(prepares.goal) ? undefined : `goal ${prepares.goal} is not a goal record of the team or a team above: teamrig goal list lists them`;
+  }
+
+  /**
+   * Why a session may not change the work order of a task it does not own, or undefined when it may (T782): the lead
+   * on any task, a sub-lead on the tasks of its group; only the LEAD_FIELDS (the lead the LEFT_OWNER_LEAD_FIELDS on a
+   * task whose owner left the team, or when it points a task holding no issue ref at an issue: issue migrate opens an
+   * issue for each task of the team and links it, replacing a note ref, while a task's issue stays its issue), and a
+   * sub-lead hands a task only to itself or a session it leads, so work never leaves its group by a sub-lead's hand. A
+   * holder of a service role giving `issue migrate` (T4606) may make that one change, the ref alone, on any task but one
+   * kept local (`local: <why>`, a security hole among them): lifting that mark stays its owner's or a leader's call.
+   */
+  private leaderUpdateProblem(task: Task, caller: string, names: readonly TaskFieldName[], changes: Partial<TaskFields>): string | undefined {
+    const isLead = caller === this.tree.lead;
+    const linksIssue = linksAnIssue(task, changes);
+    // The migrate role's holder links every team task to the issue its run opened for it (T4606), and nothing else; a
+    // task kept local is never one, so a holder's --yes run skips its row (migrate.ts skipReason asks this judge).
+    if (linksIssue && names.length === 1 && !hasIssueOrReason(task.ref) && roleHolding(this.config.serviceRoles, MIGRATE_COMMAND, caller) !== undefined) {
+      return undefined;
+    }
+    if (!isLead && !this.tree.leads(caller, task.owner)) {
+      return `only the owner (${task.owner}) or ${this.approversText(task.owner)} changes ${task.id}`;
+    }
+    const allowed = isLead && (linksIssue || !this.config.sessions.includes(task.owner)) ? LEFT_OWNER_LEAD_FIELDS : LEAD_FIELDS;
+    const notLead = names.filter((name) => !allowed.includes(name));
+    if (notLead.length > 0) {
+      return `a leader may change only ${allowed.join(', ')} on a task it does not own (asked: ${notLead.join(', ')})`;
+    }
+    const group = this.tree.groupOf(caller);
+    const { owner } = changes;
+    if (!isLead && owner !== undefined && owner !== caller && !group.includes(owner)) {
+      return `${caller} hands ${task.id} only to itself or a session it leads (${group.join(', ')}); the lead (${this.tree.lead}) moves work between groups`;
+    }
+    return undefined;
+  }
+
+  /**
+   * A task for a tracker's issue, sourced by its tracker, whose ref starts with that tracker's prefix (a Jira sync
+   * never writes a `gh:` task). The import keys its tasks on their ref, so a second one for the same issue is
+   * refused, and so is one for an issue a team task already links to in its ref (an issue the team opened for
+   * its own task, issue migrate): that task tracks it. Two issues may share a title, so the duplicate-title rule
+   * does not apply.
+   */
+  importAdd(source: ImportSource, input: ImportInput, state: RegisterState): Verdict<TaskFields> {
+    const prefix = IMPORT_SOURCES[source];
+    if (!input.ref.startsWith(prefix)) {
+      return refuse(`ref ${input.ref} is not a ${source} ref: it starts with ${prefix}`);
+    }
+    const fields: TaskFields = { ...input, source, due: null, goals: [], noGoal: false, week: null, after: [], size: null, type: null, critical: false, pin: null, exempt: null, workClass: null, prepares: null };
+    const holder = [...state.tasks.values()].find((task) => task.ref === input.ref);
+    if (holder !== undefined) {
+      return refuse(`${holder.id} already has ref ${input.ref}`);
+    }
+    const problem = this.checkFields(fields, importSource(source));
+    return problem === undefined ? ok(fields) : refuse(problem);
+  }
+
+  /**
+   * A title, description or priority the tracker changed, on the import's own task only. A field the task already has
+   * is left out, judged under the lock, so a sync that raced another changes nothing twice. A task whose line left
+   * its description out is judged by its mark (description-cut.ts), or every sync would write the body again.
+   */
+  importUpdate(source: ImportSource, task: Task, changes: ImportChanges, note: string): Verdict<UpdateChange> {
+    const notImported = this.notImported(source, task);
+    if (notImported !== undefined) {
+      return refuse(notImported);
+    }
+    const changed: ImportChanges = {
+      ...(changes.title !== undefined && changes.title !== task.title ? { title: changes.title } : {}),
+      ...(changes.description !== undefined && !holdsDescription(task, changes.description) ? { description: changes.description } : {}),
+      ...(changes.priority !== undefined && changes.priority !== task.priority ? { priority: changes.priority } : {}),
+    };
+    if (Object.keys(changed).length === 0) {
+      return refuse('nothing to change');
+    }
+    const problem = this.checkFields({ ...pickFields(task), ...changed }, importSource(source), { workClass: task.workClass }) ?? this.checkText('note', note);
+    return problem === undefined ? ok({ changes: changed, note }) : refuse(problem);
+  }
+
+  /**
+   * The one exception to "only the owner sets the status": an import opens, finishes or drops its own
+   * tasks as their issues open and close on its tracker. Any other task, and any other status, is refused.
+   * No skill comes from a tracker, so a done needs none; its evidence is the issue's url.
+   */
+  importStatus(source: ImportSource, task: Task, input: StatusInput): Verdict<StatusChange> {
+    const notImported = this.notImported(source, task);
+    if (notImported !== undefined) {
+      return refuse(notImported);
+    }
+    if (!IMPORT_STATUSES.includes(input.status)) {
+      return refuse(`the ${source} import sets only ${IMPORT_STATUSES.join(', ')}, not ${input.status}`);
+    }
+    if (input.status === task.status) {
+      return refuse(`${task.id} is already ${task.status}`);
+    }
+    const note = blankToNull(input.note);
+    const evidence = blankToNull(input.evidence);
+    if (input.status === 'done' && this.config.register.requireEvidenceOnDone && evidence === null && task.evidence === null) {
+      return refuse('done needs evidence: the issue url');
+    }
+    const problem = this.checkText('note', note) ?? this.checkText('evidence', evidence);
+    return problem === undefined ? ok({ status: input.status, note, evidence, skill: null }) : refuse(problem);
+  }
+
+  /** Why this import may not change the task: it is not one this import added (another tracker's is not either). */
+  private notImported(source: ImportSource, task: Task): string | undefined {
+    return task.source === source ? undefined : `${task.id} is not a ${source} task (source ${task.source}): the ${source} import changes only its own`;
+  }
+
+  /** A source added on this team: a session id, or the owner's marker; never an import's. */
+  private teamSourceProblem(source: string): string | undefined {
+    const { ownerSource } = this.config.register;
+    if (isImportSource(source)) {
+      return `source ${source} is kept for the tasks teamrig issue sync imports`;
+    }
+    return source === ownerSource || SESSION_NAME.test(source) ? undefined : `source ${source} is neither a session id nor ${ownerSource}`;
+  }
+
+  /**
+   * `kept`: the owner and work class an update leaves as they were. An owner stands even once it is no session of the
+   * team any more (a retired hire, a session that left at a split), as a task keeps its source, and a class even once
+   * the team renamed it out of `focus.classes`; only a value a write sets is held to the roster or the classes (T1830,
+   * T2076).
+   */
+  private checkFields(fields: TaskFields, sourceRule: SourceRule, kept: Partial<Pick<TaskFields, 'owner' | 'workClass'>> = {}): string | undefined {
+    const { register, sessions, focus } = this.config;
+    if (fields.title === '') {
+      return 'the title is empty';
+    }
+    if (fields.title.length > register.maxTitle) {
+      return `the title has ${fields.title.length} characters; the limit is ${register.maxTitle}`;
+    }
+    if (fields.owner !== kept.owner && !sessions.includes(fields.owner)) {
+      return `owner ${fields.owner} is not a session on this team`;
+    }
+    if (fields.workClass !== null && fields.workClass !== kept.workClass && !focus.classes.includes(fields.workClass)) {
+      return `class ${fields.workClass} is not one of focus.classes (${focus.classes.join(', ')})`;
+    }
+    if (fields.critical && !traitsOf(fields).review) {
+      return `critical marks only a ${reviewedTypes()}: give --type ${reviewedTypes()} too`;
+    }
+    const sourceProblem = sourceRule(fields.source);
+    if (sourceProblem !== undefined) {
+      return sourceProblem;
+    }
+    const levels = priorityLevels(register.priorities);
+    if (!levels.some((priority) => priority.id === fields.priority)) {
+      return `priority ${priorityText(fields.priority)} is not one of ${levels.map((priority) => priorityText(priority.id)).join(', ')}`;
+    }
+    if (fields.due !== null && parseUtcDeadline(fields.due) === undefined) {
+      return `due ${fields.due} is not YYYY-MM-DD or YYYY-MM-DD HH:MM`;
+    }
+    if (fields.week !== null && parseUtcDay(fields.week) === undefined) {
+      return `week ${fields.week} is not a YYYY-MM-DD date`;
+    }
+    const goalPattern = register.goalPattern === undefined ? undefined : new RegExp(register.goalPattern, 'u');
+    const badGoal = goalPattern === undefined ? undefined : fields.goals.find((goal) => !goalPattern.test(goal));
+    if (badGoal !== undefined) {
+      return `goal ${badGoal} does not match ${register.goalPattern}`;
+    }
+    if (fields.noGoal && fields.goals.length > 0) {
+      return `goals none says the task serves no goal, so it names none (asked: ${fields.goals.join(', ')})`;
+    }
+    if (fields.description !== null && fields.description.length > MAX_DESCRIPTION) {
+      return `the description has ${fields.description.length} characters; the limit is ${MAX_DESCRIPTION}`;
+    }
+    const size = fields.size === null ? undefined : sizeProblem(fields.size);
+    if (size !== undefined) {
+      return size;
+    }
+    return this.checkText('title', fields.title) ?? this.checkText('description', fields.description) ?? this.checkText('ref', fields.ref);
+  }
+
+  /** Checks the length against `maxText` (the title and description have their own limits), then the secret shapes. */
+  private checkText(name: string, text: string | null): string | undefined {
+    if (text === null) {
+      return undefined;
+    }
+    if (!OWN_LIMITS.includes(name) && text.length > this.config.register.maxText) {
+      return `${name} has ${text.length} characters; the limit is ${this.config.register.maxText}`;
+    }
+    return this.secrets.refusal(name, text);
+  }
+}
+
+/** The texts whose length is judged against their own limit, not `maxText`. */
+const OWN_LIMITS: readonly string[] = ['title', 'description'];
+
+function pickFields(task: Task): TaskFields {
+  const { title, description, owner, source, ref, priority, due, goals, noGoal, week, after, size, type, critical, pin, exempt, workClass, prepares } = task;
+  return { title, description, owner, source, ref, priority, due, goals, noGoal, week, after, size, type, critical, pin, exempt, workClass, prepares };
+}
+
+/** An update naming goals for a task said to serve none also clears that mark, which a task with goals cannot hold. */
+function clearNoGoal(task: Task, changes: Partial<TaskFields>): Partial<TaskFields> {
+  return changes.goals !== undefined && changes.goals.length > 0 && changes.noGoal === undefined && task.noGoal ? { ...changes, noGoal: false } : changes;
+}
+
+/** The types an item can be critical in, those that give the review: `bug`, or `bug|incident`. */
+function reviewedTypes(): string {
+  return ITEM_TYPES.filter((type) => ITEM_TYPE_TRAITS[type].review).join('|');
+}
+
+/** An update moving a critical item to a type without a review also clears its critical mark, which that type cannot hold. */
+function clearCritical(task: Task, changes: Partial<TaskFields>): Partial<TaskFields> {
+  return changes.type !== undefined && changes.critical === undefined && task.critical && !traitsOf({ type: changes.type }).review ? { ...changes, critical: false } : changes;
+}
+
+/** An update's description trimmed at both ends, its newlines kept; a blank one clears it, as `none` does. */
+function trimDescription(changes: Partial<TaskFields>): Partial<TaskFields> {
+  return changes.description === undefined ? changes : { ...changes, description: blankToNull(changes.description ?? undefined) };
+}
+
+/**
+ * Why a set may not go through as it stands for the approval the task holds (T3207), or null: a set that would drop a
+ * leader's approval before its step ends needs `--drop-approval`, since a merge queued on it is refused once it is gone;
+ * the flag on a set that drops none is refused too, so it never reads as having done something. The refusal names the
+ * approval and its sha, and the ways to record progress that keep it: the same wait set again keeps it only with the
+ * approved head in its note (T3094), so that way is named with the head to write.
+ */
+function approvalDropProblem(task: Task, input: StatusInput, waits: readonly WaitReason[]): string | null {
+  const answer = droppedApproval(task, input.status, waits, input.note ?? null);
+  if (answer === null) {
+    return input.dropApproval === true ? `--drop-approval goes only with a set that drops ${task.id}'s approval, and it holds none this set drops` : null;
+  }
+  if (input.dropApproval === true) {
+    return null;
+  }
+  const sha = commitsNamed(answer.note)[0];
+  const what = sha === undefined ? `${answer.by}'s approval` : `${answer.by}'s approval of ${sha}`;
+  const restated = input.status === 'waiting' && sha !== undefined && sameWaits(task.waits, waits);
+  return [
+    `${task.id} holds ${what}, and setting it ${input.status} drops it, so a merge waiting on it is refused`,
+    `record progress with teamrig update ${task.id} --note "..." instead, ${restated ? `set the same wait again with the approved head ${sha} in --note, ` : ''}or hold it behind a task or a time with --status waiting --waits approval:${answer.by},task:T<id>|time:<date>`,
+    `give it up only for a new ask (a new head): add --drop-approval`,
+  ].join('; ');
+}
+
+/**
+ * The proof a status change writes: none outside `verifying`, where `--proof` is refused; the one given; or,
+ * when a verifying task is set verifying again without one, the proof it already had.
+ */
+function proofChange(task: Task, input: StatusInput): Verdict<string | null> {
+  const proof = blankToNull(input.proof);
+  if (input.status !== 'verifying') {
+    return proof === null ? ok(null) : refuse('--proof goes only with --status verifying');
+  }
+  return ok(proof ?? (task.status === 'verifying' ? task.proof : null));
+}
+
+/**
+ * The sighting a status change leaves to watch for: none outside `done`, where `--watch` is refused, and only the one
+ * given, so setting done again without one clears it once the sighting came.
+ */
+function watchChange(input: StatusInput): Verdict<string | null> {
+  const watch = blankToNull(input.watch);
+  return watch === null || input.status === 'done' ? ok(watch) : refuse('--watch goes only with --status done');
+}
+
+/** The verify-by date a status change moves the task's due date to: only with `verifying`, and null when it stays. */
+function dueChange(task: Task, input: StatusInput): Verdict<string | null> {
+  const due = blankToNull(input.due);
+  if (due === null || due === task.due) {
+    return ok(null);
+  }
+  if (input.status !== 'verifying') {
+    return refuse(`--due goes only with --status verifying; teamrig update ${task.id} --due sets it otherwise`);
+  }
+  return parseUtcDeadline(due) === undefined ? refuse(`due ${due} is not YYYY-MM-DD or YYYY-MM-DD HH:MM`) : ok(due);
+}
+
+/**
+ * A task reason is for a task already started (see {@link hasStarted}) that found another task must finish first,
+ * a verifying one for its proof: one not started stays open with a plan dependency instead, and a finished one
+ * reopens first. The task waited on may be another register's of the team tree; an id no register's working set holds
+ * reads as finished below this register's next number, else as no task. It never closes a loop, through another
+ * register's tasks either.
+ */
+function taskWaitProblem(task: Task, id: string, state: RegisterState, elsewhere: TasksElsewhere): string | undefined {
+  if (id === task.id) {
+    return `${task.id} cannot wait on itself`;
+  }
+  if (task.status === 'done' || task.status === 'dropped') {
+    return `${task.id} is ${task.status}, so it waits on nothing: reopen it (teamrig set ${task.id} --status in-progress), then set it waiting on ${id}`;
+  }
+  if (!hasStarted(task)) {
+    return `${task.id} has not started, so it does not wait on ${id}: it stays ${task.status}, planned after it (teamrig update ${task.id} --after ${id})`;
+  }
+  const target = state.tasks.get(id) ?? elsewhere.get(id)?.task;
+  if (target === undefined && taskNumber(id) >= taskNumber(state.nextId)) {
+    return `no task ${id}`;
+  }
+  if (target === undefined || target.status === 'done' || target.status === 'dropped') {
+    return `${id} is already finished; nothing to wait on`;
+  }
+  return loopProblem(task.id, id, treeTasks(state, elsewhere), true);
+}
+
+/** True for a reason that says when a proof runs: a time, or a task whose end runs it. */
+function runsProof(reason: WaitReason): boolean {
+  return reason.kind === 'time' || reason.kind === 'task';
+}
+
+/**
+ * A proof runs when the task it waits on ends, so it waits only on one in progress or verifying (T1306), or on an
+ * open one of the same owner (#1544), who can start it now, so its end is in sight and the verifying task stops being
+ * due meanwhile; another's open task, or one waiting, has no end in sight, and the task stays waiting on it until it
+ * starts. An open one planned after a task not finished yet (`--after`) cannot start now either, so its end is not in
+ * sight: that refusal names the unfinished tasks.
+ */
+function unstartedProofTask(task: Task, id: string, context: StatusContext): string | undefined {
+  const target = context.state.tasks.get(id) ?? context.elsewhere.get(id)?.task;
+  if (target === undefined || PROOF_TASK_STATUSES.includes(target.status)) {
+    return undefined;
+  }
+  if (target.status === 'open' && target.owner === task.owner) {
+    const unfinished = unfinishedAfter(target.after, waitContext(context.state.tasks, context.now, context.zone, context.elsewhere));
+    if (unfinished.length === 0) {
+      return undefined;
+    }
+    return `${id} is planned after ${unfinished.join(', ')}, not finished yet, so it cannot start now: a proof waits on an open task of its own owner's only once it can start; until then, set ${task.id} waiting on it (--status waiting --waits task:${id})`;
+  }
+  const whose = target.status === 'open' ? ` and ${target.owner}'s` : '';
+  return `${id} is ${target.status}${whose}: a proof waits only on a task in progress or verifying, or an open one of its own owner's; until it starts, set ${task.id} waiting on it (--status waiting --waits task:${id})`;
+}
+
+/**
+ * The refusal of a verifying task set again without `--waits` whose kept waits hold one that cleared (T1306): its
+ * proof is due now, not put off again by keeping a wait that no longer holds it.
+ */
+function clearedProofWait(task: Task, kept: readonly WaitReason[], context: StatusContext): string | undefined {
+  const waits = waitContext(context.state.tasks, context.now, context.zone, context.elsewhere);
+  const cleared = kept.find((reason) => isReady(reason, waits));
+  return cleared === undefined
+    ? undefined
+    : `${task.id}'s proof waited on ${waitSpelling(cleared)}, which has cleared: run the proof now and set it done, or name when it runs with --waits (${PROOF_WAITS_USAGE})`;
+}
+
+/**
+ * This register's working set over the tasks the team tree's other registers hold, as one map a need is followed
+ * through: a loop may pass through another team's task.
+ */
+function treeTasks(state: RegisterState, elsewhere: TasksElsewhere): ReadonlyMap<string, Task> {
+  if (elsewhere.size === 0) {
+    return state.tasks;
+  }
+  return new Map([...[...elsewhere].map(([id, held]): [string, Task] => [id, held.task]), ...state.tasks]);
+}
+
+/**
+ * In progress, verifying (its work shipped, whatever an older register's row says of its start) or waiting after it
+ * started: a task that can wait on another.
+ */
+function hasStarted(task: Task): boolean {
+  return task.status === 'in-progress' || task.status === 'verifying' || (task.status === 'waiting' && task.startedAt !== null);
+}
+
+/** Open, or waiting without ever starting (on an approval, or a row an older register migrated): a task a plan fits. */
+function notStarted(task: Task): boolean {
+  return task.status === 'open' || (task.status === 'waiting' && task.startedAt === null);
+}
+
+function ownerOnly(task: Task): string {
+  return `only the owner (${task.owner}) sets the status of ${task.id}`;
+}
+
+/** The active task with this title, compared as {@link normaliseTitle} does: a new one would track the same work twice. */
+function activeDuplicate(title: string, state: RegisterState): Task | undefined {
+  return [...state.tasks.values()].find((task) => ACTIVE_STATUSES.includes(task.status) && normaliseTitle(task.title) === normaliseTitle(title));
+}
+
+/**
+ * A plan dependency is for a task not started yet, as {@link taskWaitProblem} sends it here: a started one waits on
+ * a task instead, and a finished one needs neither. Clearing it is always fine.
+ */
+function afterChangeProblem(task: Task, after: readonly string[], state: RegisterState, elsewhere: TasksElsewhere): string | undefined {
+  const first = after[0];
+  if (first !== undefined && !notStarted(task)) {
+    const keeps = task.status === 'verifying' ? 'verifying' : 'waiting';
+    const instead = hasStarted(task) ? `; a started task waits on another with --status ${keeps} --waits task:${first}` : '';
+    return `--after plans a task not started yet, and ${task.id} is ${task.status}${instead}`;
+  }
+  return afterProblem(task.id, after, state, elsewhere);
+}
+
+/**
+ * The tasks `id` comes after must exist, here or on another register of the team tree, be named once, and never need
+ * `id` back, by a plan dependency or a task wait: a loop could never start. On a create, `id` is null: the new task's
+ * number comes from the numbering at the write, above every register's, so no task names it yet.
+ */
+function afterProblem(id: string | null, after: readonly string[], state: RegisterState, elsewhere: TasksElsewhere): string | undefined {
+  const twice = after.find((other, index) => after.indexOf(other) !== index);
+  if (twice !== undefined) {
+    return `--after names ${twice} twice`;
+  }
+  if (id !== null && after.includes(id)) {
+    return `${id} cannot come after itself`;
+  }
+  const missing = after.find((other) => !elsewhere.has(other) && taskNumber(other) >= taskNumber(state.nextId));
+  if (missing !== undefined) {
+    return `no task ${missing}`;
+  }
+  if (id === null) {
+    return undefined;
+  }
+  const tasks = treeTasks(state, elsewhere);
+  for (const other of after) {
+    const loop = loopProblem(id, other, tasks, false);
+    if (loop !== undefined) {
+      return loop;
+    }
+  }
+  return undefined;
+}
+
+/**
+ * The refusal when making `id` need `other` (by a task wait when `byWait`, else a plan dependency) would close a loop:
+ * `other` already needs `id`, directly or not, and no task in a loop can ever finish.
+ */
+function loopProblem(id: string, other: string, tasks: ReadonlyMap<string, Task>, byWait: boolean): string | undefined {
+  const path = needPath(tasks, other, id);
+  const owner = tasks.get(other)?.owner;
+  if (path === undefined || owner === undefined) {
+    return undefined;
+  }
+  return `${pathText([id, ...path])} would be a loop, and no task in a loop can finish: ${loopFix(id, other, owner, byWait)}`;
+}
+
+/** Why a time to wait until (stored form) is refused, or undefined: it must be still to come. */
+function timeProblem(at: string, { now, zone }: Pick<StatusContext, 'now' | 'zone'>): string | undefined {
+  return (parseDeadline(at, zone)?.getTime() ?? 0) > now.getTime() ? undefined : `time ${showStored(at, zone)} has passed: name a time to come`;
+}
+
+/** True when `changes` point a task holding no issue ref at an issue: what issue migrate writes for each task it opens one for. */
+function linksAnIssue(task: Task, changes: Partial<TaskFields>): boolean {
+  return !isIssueRef(task.ref) && isIssueRef(changes.ref);
+}
+
+function blankToNull(text: string | undefined): string | null {
+  return text === undefined || text.trim() === '' ? null : text.trim();
+}
+
+/** Titles compare case- and space-insensitively when looking for duplicates. */
+export function normaliseTitle(title: string): string {
+  return title.toLowerCase().replace(/\s+/g, ' ').trim();
+}

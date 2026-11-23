@@ -1,13 +1,16 @@
 // Copied from teamrig's src/config/types.ts by scripts/sync-core.ts: change it there, then run the sync.
+import type { JsonRecord } from '../core/guards.ts';
 import type { TaskStatus } from '../register/model.ts';
 import type { ItemType } from '../register/events.ts';
 import type { CoreRuleKey } from '../rules/keys.ts';
 import type { AdmissionMode } from '../delivery/admission.ts';
 import type { NeedKind } from '../tabs/need-kind.ts';
 import type { ServiceCommand } from '../permissions/service-commands.ts';
+import type { ChangeSourceId } from '../changes/ids.ts';
+import type { ImportScope } from '../sync/scope.ts';
 
 /** The config format this code reads and writes. Older files are migrated in memory on load. */
-export const CONFIG_VERSION = 9;
+export const CONFIG_VERSION = 10;
 
 export interface RolesConfig {
   /** Owns priorities, team rules and the owner's decision queue; may re-prioritize and reassign tasks; hands the work itself to others (`leadBoundary`). */
@@ -50,6 +53,8 @@ export interface RegisterCheckConfig {
   readonly staleAfterHours: number;
   /** An open task its owner has not touched this long after assignment is NOT-PICKED-UP. */
   readonly notPickedUpAfterHours: number;
+  /** A blocker still unfixed (open, in progress or waiting) this long after it became one is BLOCKER-OPEN (T4329). */
+  readonly blockerOpenAfterHours: number;
   /** A session's in-progress task outranked this long by its own open task, on band and score, is a PRIORITY-SKIP. */
   readonly prioritySkipAfterHours: number;
   /**
@@ -218,6 +223,12 @@ export interface LockConfig {
   readonly ttlMs: number;
   readonly pollMs: number;
   readonly waitMs: number;
+}
+
+/** Where `teamrig changes` reads what changed in the project (src/changes/). */
+export interface ChangesConfig {
+  /** The change sources to read, in the order their entries win; empty: every source that applies to the project. */
+  readonly sources: readonly ChangeSourceId[];
 }
 
 /** Privileged commands a reviewer approved, run by `teamrig exec` (src/exec/). */
@@ -583,6 +594,27 @@ export interface TurnLogConfig {
   readonly keepHours: number;
 }
 
+export const UI_MODES = ['terminal', 'window', 'both'] as const;
+/**
+ * Where `teamrig ui` shows the UI (T5105): `terminal` in the terminal it is run in, `window` in a window of its own,
+ * `both` in the two at once.
+ */
+export type UiMode = (typeof UI_MODES)[number];
+
+export function isUiMode(value: unknown): value is UiMode {
+  return UI_MODES.some((mode) => mode === value);
+}
+
+/** The dedicated UI `teamrig ui` starts (T4761). */
+export interface UiConfig {
+  readonly mode: UiMode;
+  /**
+   * The absolute path of a UI entry script to start in place of the released UI: a build of one's own, for work on
+   * the UI itself. Absent: the released UI.
+   */
+  readonly path?: string;
+}
+
 /**
  * The needs-you band (T2511): every tab of the team shows which other tab asks the user something (a permission
  * prompt, a question, a decision line), read from the tab files (src/tabs/need.ts), with a button that focuses it.
@@ -650,15 +682,21 @@ export interface WakeConfig {
   readonly enabled: boolean;
   /**
    * The least urgent priority that wakes a session: 1 wakes for p0 and p1 only. A session its budget holds (past
-   * its daily budget while the team has no room today, the wake's own turn counted for both) or a short day pauses
+   * its daily budget while the team has no room today, or its team past its own part with no room and no lift or
+   * burst for the session; the wake's own turn counted for both) or a short day pauses
    * (`budget.pauseByPriority`) wakes for p0 only, and one in the budget's quiet hours for p0 and p1 only (p0 alone
    * when their action is block), whatever this says.
    */
   readonly priority: number;
   /** How long a wake waits after the first new task it is for, so tasks handed together wake the session once. */
   readonly batchSeconds: number;
-  /** The least time between two wakes of one session; work handed meanwhile waits and wakes it once. */
+  /**
+   * The least time between two wakes of one session, for one task due; work handed meanwhile waits and wakes it once.
+   * A blocker skips it.
+   */
   readonly minGapMinutes: number;
+  /** The gap once five tasks or more are due, stepped evenly from `minGapMinutes`; read as that when it is less. */
+  readonly maxGapMinutes: number;
   /**
    * The day's start (`HH:MM` UTC, outside the budget's quiet hours): from then each session with work it can start,
    * of any priority, that has had no turn since gets one wake that day, and a burst wakes its sessions the same way
@@ -672,6 +710,12 @@ export interface WakeConfig {
 export interface TestsConfig {
   /** The most characters of failing tests it prints, all of them together; the rest stays in the log. */
   readonly maxFailureChars: number;
+}
+
+/** The one-time steps teamrig needs its person to take (`teamrig steps`). */
+export interface StepsConfig {
+  /** Days a step's backup is kept before the lead's `teamrig start` removes it. */
+  readonly backupDays: number;
 }
 
 /** The kinds of issue a task's issue is typed as (T3406): a design issue, a goal (a task planned after its parts), a bug, else a task. */
@@ -755,7 +799,7 @@ export interface GithubConfig {
   /**
    * The session that hears the pull request news no task owner takes: a pull request from a fork or by an author
    * outside the repository, or from a branch that names no task. Unset, the first holder of a service role holding
-   * `issue close` (github/watcher.ts), else the lead.
+   * `issue close` (sync/watcher.ts), else the lead.
    */
   readonly watcher?: string;
   /**
@@ -770,6 +814,19 @@ export interface GithubConfig {
    * (core/stamp.ts, #1102). On by default; false posts the text as given.
    */
   readonly stamp: boolean;
+}
+
+/**
+ * What `teamrig issue sync` takes from each tracker, the same for every one (T5013): the scope each place's list is read
+ * with, and the caps on the tasks one tracker's import adds. A changed scope adds nothing on an automatic run until a
+ * session runs `issue sync --yes` once by hand; tasks the register already imports keep following meanwhile.
+ */
+export interface SyncConfig {
+  readonly scope: ImportScope;
+  /** The most open tasks one tracker's import holds: past it a run adds none and prints a CAPPED line; 0 adds none. */
+  readonly maxOpen: number;
+  /** The most tasks one run adds per tracker, the rest left for the next run; 0 adds none. */
+  readonly maxNewPerSync: number;
 }
 
 /**
@@ -802,6 +859,11 @@ export interface CommitsConfig {
    */
   readonly sourcePatterns: readonly string[];
   readonly gate: CommitGate;
+  /**
+   * The commit-msg hook adds a Made-by trailer naming the program, model and effort that made the commit, beside the
+   * Made-with one (core/stamp.ts). On by default; false leaves the message as written.
+   */
+  readonly stamp: boolean;
 }
 
 export const WEEKDAYS = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'] as const;
@@ -997,7 +1059,8 @@ export interface BudgetConfig {
   /**
    * On a short day (what is left of the week gives less than the pace line plans for the day), fund the team's
    * sessions in the priority order of their top queued task and pause the sessions none of it reaches. The lead, the delivery owner
-   * held in the team and lifted sessions are never paused. Off: no session of the team is paused.
+   * held in the team, the sessions the budget never holds (the security reviewer held in the team and the GitHub
+   * answerer) and lifted sessions are never paused. Off: no session of the team is paused.
    */
   readonly pauseByPriority: boolean;
   /** The live warning shows a line as a session passes each of these % of its daily budget. */
@@ -1170,7 +1233,8 @@ export interface DeliveryRepoConfig {
   readonly updateMainCheckout: boolean;
   /**
    * The folder `teamrig worktree add` makes each new worktree in, one folder per branch named after it with each `/`
-   * as `-`. A relative path is in the main checkout; unset: `.claude/worktrees` there.
+   * as `-`. A relative path is in the main checkout; unset: the folder the run's host makes its own worktrees of that
+   * checkout in (`worktreeFolderOf`), and none on a host that names no such folder.
    */
   readonly worktreeFolder?: string;
   /**
@@ -1334,6 +1398,11 @@ export interface DecisionsConfig {
    * session and its full brief, never from a daily card or a batch (T868).
    */
   readonly dedicatedOwners: readonly string[];
+  /**
+   * Teams under this one whose lead meets the owner itself (#1430): this team's meeting agenda leaves their waits on
+   * the owner, and those of every team under them, out of DECISIONS, with one count line per team in their place.
+   */
+  readonly ownMeetingTeams: readonly string[];
 }
 
 /** `refresh.autoRestart`: on or off for every session, or on for the team's lead only. */
@@ -1348,17 +1417,11 @@ export type AutoRestart = boolean | typeof AUTO_RESTART_LEAD;
  */
 export interface RefreshConfig {
   readonly enabled: boolean;
-  /** The context size, in tokens, that asks for a refresh. Absolute, since a hook cannot see the window size. */
-  readonly contextTokens: number;
   /**
-   * The threshold for a session on a context window larger than 200k, when larger than `contextTokens`: its `launch`
-   * model ends in `[1m]`, or its refresh state shows the window, since a model can run a 1M window without the suffix
-   * (the lead's plain `opus`) and no hook is told it: the window the plugin's mod reports, a context past 200k, or a
-   * fresh start measured over `contextTokens` (src/refresh/decide.ts `windowOf`). A fresh session on it starts at over
-   * 120k (its system prompt, rules and handover), and the window has room far past it. 0: `contextTokens` for every
-   * window.
+   * The context size, in tokens, that asks for a refresh, on every context window (T4083): a larger threshold for a 1M
+   * window let a tab that never reached it never refresh. Absolute, since a hook cannot see the window size.
    */
-  readonly largeWindowContextTokens: number;
+  readonly contextTokens: number;
   /**
    * Also refresh once this many tasks were finished since the context was last fresh (a /clear, a new
    * process or a compaction), when the context is at least `everyTasksMinTokens`; 0 turns it off.
@@ -1397,7 +1460,9 @@ export interface RefreshConfig {
    * own compaction (trigger `auto`) of its main conversation as long as the context, as Claude Code estimates it, is
    * under this many tokens: the /clear at the turn's end replaces the compaction. Past it a compaction goes through, so
    * a session never runs out of room (a prompt too long for the window is past it too); `/compact` and a subagent's own
-   * compaction are never stopped. 0: never stopped. It also bounds an open owner meeting (the lead's daily one, or a
+   * compaction are never stopped. Apart from it, the first automatic compaction of a tab is held back once for the
+   * refresh, which then asks for the handover (src/refresh/decide.ts `decideCompact`). 0: never stopped, not even
+   * that once. It also bounds an open owner meeting (the lead's daily one, or a
    * booked one from its `meeting start M<n>`), which holds the refresh of each session in it only under it
    * (src/refresh/decide.ts `meetingHolds`); 0 holds it until the meeting ends.
    */
@@ -1691,8 +1756,8 @@ export function isEffortLevel(value: unknown): value is EffortLevel {
 
 /**
  * The Claude Code model and effort a session starts on (`claude --model`, `claude --effort`), and the folder it
- * starts in; an unset key leaves Claude Code's own choice. The lead takes `DEFAULT_LEAD_LAUNCH` for each model
- * and effort key it leaves unset.
+ * starts in; an unset key leaves Claude Code's own choice. The lead takes its host's lead default for each
+ * model and effort key it leaves unset (src/config/launch.ts `launchOf`).
  */
 export interface LaunchConfig {
   /** A Claude Code model alias, such as `best` or `opus`, or a full model id starting `claude-`. */
@@ -1750,8 +1815,8 @@ export interface MeetingConfig {
   readonly spotlight: { readonly enabled: boolean; readonly dim: number; readonly breakthroughSeconds: number };
   /**
    * The status line while a meeting is open (T2513): the meeting tab leads its line with `Meeting: <title>` and every
-   * other tab appends `heldText`, each mark alone in `colour` (`#rrggbb`, T2985), so a glance at any tab says the team
-   * is held for the meeting.
+   * other tab appends `heldText: <title>`, each mark alone in `colour` (`#rrggbb`, T2985), so a glance at any tab says
+   * which meeting is on; only messages to the meeting's own session wait, so the mark never says the tab is held (#1675).
    */
   readonly statusLine: { readonly enabled: boolean; readonly colour: string; readonly heldText: string };
 }
@@ -1797,6 +1862,7 @@ export interface KitConfig {
   readonly contextFiles: ContextFilesConfig;
   readonly lock: LockConfig;
   readonly exec: ExecConfig;
+  readonly changes: ChangesConfig;
   readonly pushGuard: PushGuardConfig;
   readonly packageGuard: PackageGuardConfig;
   readonly commitGuard: CommitGuardConfig;
@@ -1812,9 +1878,17 @@ export interface KitConfig {
   readonly loops: LoopsConfig;
   readonly wake: WakeConfig;
   readonly tests: TestsConfig;
+  readonly steps: StepsConfig;
   readonly github: GithubConfig;
+  readonly sync: SyncConfig;
   /** Each service role by name: the teamrig commands it holds and the sessions that hold it (T2984). */
   readonly serviceRoles: Readonly<Record<string, ServiceRoleConfig>>;
+  /**
+   * Each connector's own section, by the connector's id, as the file holds it. The load checks only that each is an
+   * object under an id: the keys inside are the connector's, read and checked by its adapter when a command reaches
+   * it (plugin-api/connector.ts), so the core never learns a connector's settings.
+   */
+  readonly connectors: Readonly<Record<string, JsonRecord>>;
   readonly alerts: AlertsConfig;
   readonly decisions: DecisionsConfig;
   /**
@@ -1832,8 +1906,16 @@ export interface KitConfig {
    * hours.
    */
   readonly pickerGuard: { readonly enabled: boolean };
+  /**
+   * Puts `teamrig` on the user's PATH: a session start of the team writes the launchers in the kit home's bin folder
+   * and adds that folder to the user's PATH (src/restore/cli-on-path.ts, T5095). On by default: the CLI a team's
+   * docs name must run in any terminal. Off: a session of the team writes neither, so an entry the user removed stays
+   * removed through each new version; a session of another team, or of none, still writes them.
+   */
+  readonly cliOnPath: { readonly enabled: boolean };
   readonly meeting: MeetingConfig;
   readonly turnLog: TurnLogConfig;
+  readonly ui: UiConfig;
   readonly meetingNotices: MeetingNoticesConfig;
   /** Lets a shell line that only reads run without a permission prompt; off by default. */
   readonly readonlyShell: ReadonlyShellConfig;
@@ -1849,7 +1931,7 @@ export interface KitConfig {
   readonly statusLine: StatusLineConfig;
   /** Goal-first ranking: work classes, the WSJF score, the WIP rule and the class allocation (T2076). */
   readonly focus: FocusConfig;
-  /** Each session's Claude Code model and effort, by id; the lead's unset keys take `DEFAULT_LEAD_LAUNCH`. */
+  /** Each session's Claude Code model and effort, by id; the lead's unset keys take its host's lead default. */
   readonly launch: Readonly<Record<string, LaunchConfig>>;
   readonly paths: PathsConfig;
 }

@@ -30,6 +30,7 @@ export const CONFIG_LIMITS = {
   reviewRequireOn: { maxItems: 2 },
   criticalOwners: { maxItems: 32 },
   dedicatedOwners: { maxItems: 32 },
+  ownMeetingTeams: { maxItems: 32 },
   maxVerifying: { min: 0, max: 100 },
   maxReparks: { min: 0, max: 20 },
   maxSelfMadePerDay: { min: 0, max: 200 },
@@ -64,13 +65,19 @@ export const CONFIG_LIMITS = {
   wakePriority: { min: 1, max: 99 },
   wakeBatchSeconds: { min: 0, max: 3600 },
   wakeMinGapMinutes: { min: 0, max: 1440 },
+  wakeMaxGapMinutes: { min: 0, max: 1440 },
   maxFailureChars: { min: 500, max: 50_000 },
+  stepBackupDays: { min: 1, max: 365 },
   githubRepos: { maxItems: 20, maxLength: 140 },
   issueTypeNames: { maxItems: 5, maxLength: 100 },
   closedDays: { min: 1, max: 365 },
   githubProbeSeconds: { min: 0, max: 3600 },
   similarThreshold: { min: 0, max: 1 },
   githubFollowMax: { min: 0, max: 100 },
+  /** A label name up to the longest tracker cap (255), past the shortest (50): one list serves every tracker. */
+  syncScopeLabels: { maxItems: 20, maxLength: 255 },
+  syncMaxOpen: { min: 0, max: 5000 },
+  syncMaxNewPerSync: { min: 0, max: 1000 },
   budgetTargetPct: { min: 1, max: 100 },
   budgetReservePct: { min: 0, max: 50 },
   /** 0 turns the floor off; past 50 one team's floor would leave a second less than its own (T2215). */
@@ -153,7 +160,7 @@ export const RULE_CONFLICT_LIMITS = {
   reasonMaxLength: 200,
 } as const;
 
-/** The longest `meeting.statusLine.heldText`: it is appended to every other tab's status line, which must stay one row. */
+/** The longest `meeting.statusLine.heldText`: it and the meeting's title end every other tab's status line, which must stay one row. */
 export const MEETING_HELD_TEXT_MAX_LENGTH = 40;
 
 /** `meeting.statusLine.colour`: a 24-bit `#rrggbb` colour, the form the status line's ANSI foreground code takes. */
@@ -203,6 +210,16 @@ export const ISSUE_FIELD_NAME_MAX_LENGTH = 100;
 export const SERVICE_ROLE_LIMITS = {
   maxRoles: 16,
   namePattern: /^[a-z][a-z0-9-]{0,31}$/,
+} as const;
+
+/**
+ * Bounds on `connectors`: how many connectors a team gives a section, and the shape of a connector's id. The id is
+ * the one a connector adapter declares, so the pattern is the plugin API's (plugin-api/declaration.ts), written again
+ * here because the config reads nothing of that API; a spec holds the two equal.
+ */
+export const CONNECTOR_LIMITS = {
+  maxConnectors: 16,
+  idPattern: /^[a-z][a-z0-9]*(-[a-z0-9]+)*$/,
 } as const;
 
 /** Bounds on the fields of one review gate entry (`pushGuard.reviewPaths`). */

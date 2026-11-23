@@ -288,6 +288,23 @@ export const DROP_ROLE_COMMENT: ConfigMigration = {
   },
 };
 
+/** Why v10 reads no large-window threshold; the parser flags a hand-written one with the same words. */
+export const LARGE_WINDOW_DROPPED = 'a tab that never reached the larger limit never refreshed, so refresh.contextTokens holds on every context window: raise that one instead';
+
+/** v9 to v10: one refresh threshold for every window (T4083), so `refresh.largeWindowContextTokens` goes. */
+export const DROP_LARGE_WINDOW: ConfigMigration = {
+  from: 9,
+  firstRelease: '0.505.0',
+  apply: (config) => {
+    const refresh = config['refresh'];
+    if (!isRecord(refresh)) {
+      return { config, changes: [] };
+    }
+    const step = withoutKeys(refresh, ['largeWindowContextTokens'], 'refresh', LARGE_WINDOW_DROPPED);
+    return step.changes.length === 0 ? { config, changes: [] } : { config: { ...config, refresh: step.config }, changes: step.changes };
+  },
+};
+
 /** The shipped chain, in order: each step reads `from` and produces `from + 1`. */
 export const CONFIG_MIGRATIONS: readonly ConfigMigration[] = [
   RENAME_TIERS_TO_PRIORITIES,
@@ -298,6 +315,7 @@ export const CONFIG_MIGRATIONS: readonly ConfigMigration[] = [
   DROP_IDLE_RETIRE,
   RENAME_TO_DELIVERY,
   DROP_ROLE_COMMENT,
+  DROP_LARGE_WINDOW,
 ];
 
 /** The config format a release reads and writes: its version and the migration chain that reaches it. */

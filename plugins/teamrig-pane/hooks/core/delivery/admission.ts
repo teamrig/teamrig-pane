@@ -82,6 +82,11 @@ export interface InLine {
     readonly request?: Pick<LineRequest, 'priority' | 'class'> & Partial<Pick<LineRequest, 'kind' | 'frontAt' | 'repo'>> & { readonly heavy?: boolean };
     /** What its last look found it waiting on, and since when; left out before its first look. */
     readonly waitingOn?: { readonly reason: WaitCause; readonly since: string };
+    /**
+     * True for a step taking back the share it set aside (`teamrig step-back`, T4196): it already ran in its turn, so it
+     * keeps its arrival place ahead of later steps whatever the class turns say; left out for every other step.
+     */
+    readonly back?: boolean;
   };
 }
 
@@ -135,10 +140,12 @@ function frontOf(waiter: InLine['waiter']): number | undefined {
 
 /**
  * The line in admission order. `serial` (or no rules): arrival order. `pipeline`: the steps of a task its lead put at
- * the front (T4082), the earliest put first; then p0 steps, in arrival order; then
+ * the front (T4082), the earliest put first; then blocker, then p0 steps, each in arrival order; then
  * the class whose turn it is (least virtual time in `turns`); inside a class, the aged priority; then arrival. A ticket
  * that names no request counts as `defaultClass` at {@link UNNAMED_PRIORITY}. A class `turns` lacks starts at the least
  * virtual time of the waiting classes it has (0 when it has none), so a class that had no step waiting banks no turns.
+ * A step taking back its share then stands ahead of every later arrival that is neither fronted nor more urgent
+ * ({@link keepBackPlaces}).
  */
 export function admissionOrder<T extends InLine>(line: readonly T[], now: number, rules: AdmissionRules | undefined, turns: ClassTurns): T[] {
   const byArrival = [...line].sort(byName);
@@ -160,14 +167,43 @@ export function admissionOrder<T extends InLine>(line: readonly T[], now: number
     };
     return { ticket, rank };
   });
-  return ranked.sort((a, b) => compareRanks(a.rank, b.rank) || byName(a.ticket, b.ticket)).map(({ ticket }) => ticket);
+  return keepBackPlaces(ranked.sort((a, b) => compareRanks(a.rank, b.rank) || byName(a.ticket, b.ticket)));
 }
 
 /**
- * Fronted first, the earliest put there first; then urgent; between two urgent ones, neither (arrival decides); else the
+ * `order` (ranked, in admission order) with each step taking back its share moved ahead of the first later arrival
+ * ranked before it that is neither fronted nor more urgent (T4196). Such a step already ran in its turn and its class
+ * was charged for it; set aside only while it waited on a landing turn, it would otherwise wait behind heavy steps of
+ * other classes that joined the line after it ran, while the main it checked moves on. Taken in arrival order, each
+ * after those placed before it that it does not outrank, so two of them keep their arrival order between them.
+ */
+function keepBackPlaces<T extends InLine>(order: readonly { readonly ticket: T; readonly rank: Rank }[]): T[] {
+  const placed = order.filter(({ ticket }) => ticket.waiter.back !== true);
+  const backs = order.filter(({ ticket }) => ticket.waiter.back === true).sort((a, b) => byName(a.ticket, b.ticket));
+  for (const back of backs) {
+    const ranked = order.indexOf(back);
+    const from = placed.findLastIndex((entry) => entry.ticket.waiter.back === true && compareUrgency(back.rank, entry.rank) >= 0) + 1;
+    const at = placed.findIndex((entry, index) => index >= from && (order.indexOf(entry) > ranked || (byName(entry.ticket, back.ticket) > 0 && compareUrgency(entry.rank, back.rank) >= 0)));
+    placed.splice(at === -1 ? placed.length : at, 0, back);
+  }
+  return placed.map(({ ticket }) => ticket);
+}
+
+/**
+ * Fronted first, the earliest put there first; then urgent; between two urgent ones the blocker, else arrival decides; else the
  * least turn, then the most urgent aged priority.
  */
 function compareRanks(a: Rank, b: Rank): number {
+  const urgency = compareUrgency(a, b);
+  // Between two fronted or two urgent steps the turn never decides: only when they were put there, or their level, then arrival.
+  if (urgency !== 0 || a.front !== undefined || a.urgent) {
+    return urgency;
+  }
+  return a.turn - b.turn || a.priority - b.priority;
+}
+
+/** The part of {@link compareRanks} that a turn never outranks: fronted first, then urgent; 0 when neither outranks the other there. */
+function compareUrgency(a: Rank, b: Rank): number {
   if (a.front !== undefined || b.front !== undefined) {
     if (a.front === undefined || b.front === undefined) {
       return a.front === undefined ? 1 : -1;
@@ -178,9 +214,10 @@ function compareRanks(a: Rank, b: Rank): number {
     return a.urgent ? -1 : 1;
   }
   if (a.urgent) {
-    return 0;
+    // A blocker (-1) goes ahead of p0 (T4329); urgent priorities never age, so this is the level each step named.
+    return a.priority - b.priority;
   }
-  return a.turn - b.turn || a.priority - b.priority;
+  return 0;
 }
 
 /**

@@ -24,6 +24,9 @@ import type { LimitSpan } from '../register/stats.ts';
  * - `start`: where the week's use counts from, epoch ms: the reset before it, or one inside the week (src/budget/pace.ts
  *   `WeekWindow`), for a reader that draws the pace line `teamrig budget` reads but cannot open the account's period on
  *   every tick, as the status line;
+ * - `startPct`: the account's use at `start`, in percent, where that pace line starts: above 0 after a reset inside the
+ *   week that left use, as a reset of one model's limit does (`WeekWindow.startPct`). Optional, read as 0 when absent,
+ *   so it raises no format: a reader bundled before it, as the pane's, still reads the file;
  * - `at`: when it was read, epoch ms, to the minute;
  * - `limits`: the stretches the account's week sat at its usage limit, oldest first, each `{ start, end }` in epoch ms
  *   (src/budget/extra.ts `limitSpansOf`), for a reader that marks those days but cannot load the meter log, as the
@@ -35,7 +38,7 @@ import type { LimitSpan } from '../register/stats.ts';
  */
 export const TEAM_WEEK_IN_STATE = ['usage', 'team.week.json'] as const;
 
-/** The team week summary's format; a field added to it raises this. */
+/** The team week summary's format; a field added to it raises this, unless older readers may skip it (`startPct`). */
 export const TEAM_WEEK_FORMAT = 3;
 
 /** The format before `start`, still read for a team whose hooks have not written since. */
@@ -54,6 +57,8 @@ export interface TeamWeekSummary {
   readonly resetsAt: number;
   /** Where the week's use counts from; undefined from a format 1 or 2 file, which held none. */
   readonly start: number | undefined;
+  /** The account's use at `start`, in percent; 0 from a file that holds none. */
+  readonly startPct: number;
   readonly at: number;
   /** The stretches the account's week sat at its usage limit; none from a format 1 file, which held none. */
   readonly limits: readonly LimitSpan[];
@@ -67,8 +72,8 @@ export interface NamedTeamWeek extends TeamWeekSummary {
 
 /** The summary as its file's text. */
 export function formatTeamWeek(summary: NamedTeamWeek): string {
-  const { account, usedPct, plannedPct, accountUsedPct, resetsAt, start, at, limits } = summary;
-  return JSON.stringify({ [VERSION_FIELD]: TEAM_WEEK_FORMAT, account, usedPct, plannedPct, accountUsedPct, resetsAt, start, at, limits });
+  const { account, usedPct, plannedPct, accountUsedPct, resetsAt, start, startPct, at, limits } = summary;
+  return JSON.stringify({ [VERSION_FIELD]: TEAM_WEEK_FORMAT, account, usedPct, plannedPct, accountUsedPct, resetsAt, start, startPct, at, limits });
 }
 
 /** One stored stretch; undefined when it is damaged: a stretch ends after it starts. */
@@ -106,16 +111,17 @@ export function parseTeamWeek(text: string): TeamWeekSummary | undefined {
   const accountUsedPct = numberField(parsed, 'accountUsedPct');
   const resetsAt = numberField(parsed, 'resetsAt');
   const at = numberField(parsed, 'at');
+  const startPct = numberField(parsed, 'startPct') ?? 0;
   if (usedPct === undefined || plannedPct === undefined || accountUsedPct === undefined || resetsAt === undefined || at === undefined) {
     return undefined;
   }
   if (version === UNNAMED_FORMAT) {
-    return { account: undefined, usedPct, plannedPct, accountUsedPct, resetsAt, start: undefined, at, limits: [] };
+    return { account: undefined, usedPct, plannedPct, accountUsedPct, resetsAt, start: undefined, startPct, at, limits: [] };
   }
   const limits = parseLimits(parsed['limits']);
   const start = numberField(parsed, 'start');
   if (account === undefined || limits === undefined || (version === TEAM_WEEK_FORMAT && start === undefined)) {
     return undefined;
   }
-  return { account, usedPct, plannedPct, accountUsedPct, resetsAt, start, at, limits };
+  return { account, usedPct, plannedPct, accountUsedPct, resetsAt, start, startPct, at, limits };
 }

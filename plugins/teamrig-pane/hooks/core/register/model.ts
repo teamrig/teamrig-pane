@@ -1,4 +1,5 @@
 // Copied from teamrig's src/register/model.ts by scripts/sync-core.ts: change it there, then run the sync.
+import { isNonNegativeInteger } from '../core/guards.ts';
 import { ID_PATTERN } from '../core/ids.ts';
 
 /**
@@ -42,7 +43,7 @@ export function isTaskStatus(value: unknown): value is TaskStatus {
 export const SESSION_NAME = ID_PATTERN;
 
 /**
- * The source of a task imported from a GitHub issue: only `teamrig issue sync` writes one (github/sync.ts),
+ * The source of a task imported from a GitHub issue: only `teamrig issue sync` writes one (sync/sync.ts),
  * and a session cannot give it to a task (policy.ts). Kept here, with the register's other names, so the
  * read side (views.ts, and the pane's copy of it) needs no write policy.
  */
@@ -63,6 +64,35 @@ export function isIssueRef(ref: string | null | undefined): ref is IssueRefText 
 }
 
 /**
+ * The trackers `teamrig issue sync` imports from, each source beside the prefix its tasks' refs start with. A task
+ * of one of these sources was written by the import alone (policy.ts). The source is the connector's id and the
+ * prefix its declaration's `refPrefix`: this folder imports no adapter, so the composition spec holds the two equal.
+ * The local connector is no import source: its `local: ` refs carry a reason, not an issue.
+ */
+export const IMPORT_SOURCES = { [GITHUB_SOURCE]: ISSUE_REF_PREFIX, jira: 'jira:' } as const;
+
+/** A tracker the import writes tasks for, by its connector id. */
+export type ImportSource = keyof typeof IMPORT_SOURCES;
+
+/** A ref an import source wrote: its prefix, then an id only that tracker's connector reads. */
+export type TrackerRefText = `${(typeof IMPORT_SOURCES)[ImportSource]}${string}`;
+
+/** Every import source, in the table's order; model.test.ts holds it equal to the table's keys. */
+export const IMPORT_SOURCE_IDS: readonly ImportSource[] = [GITHUB_SOURCE, 'jira'];
+
+export function isImportSource(value: unknown): value is ImportSource {
+  return IMPORT_SOURCE_IDS.some((source) => source === value);
+}
+
+/**
+ * Whether a ref points at an issue of any import source, by its prefix alone. Never a generic `<word>:` test: the
+ * register holds free-text refs (`https:...`) beside the trackers' own.
+ */
+export function isTrackerRef(ref: string | null | undefined): ref is TrackerRefText {
+  return typeof ref === 'string' && IMPORT_SOURCE_IDS.some((source) => ref.startsWith(IMPORT_SOURCES[source]));
+}
+
+/**
  * The ref of a task kept off GitHub: this, then the reason (`add --local`), so the reason is on the task and never
  * posted. Here, beside ISSUE_REF_PREFIX, so the check can tell a task with its reason from one with neither.
  */
@@ -73,9 +103,24 @@ export function hasIssueOrReason(ref: string | null): boolean {
   return isIssueRef(ref) || (ref !== null && ref.startsWith(LOCAL_REF_PREFIX));
 }
 
-/** A priority as the CLI prints and takes it: `p1`, the most urgent, `p2` and so on. */
+/**
+ * The blocker level (T4329), above p0: drop everything and fix it now. Lower is more urgent, so every sort and every
+ * `<= p0` test already puts it first. On disk it is `priority: 0` with `blocker: true` (events.ts), so an older teamrig,
+ * which refuses a negative priority, reads it as p0.
+ */
+export const BLOCKER_PRIORITY_ID = -1;
+
+/** Whether a stored value is a priority id: the blocker's, or p0 and below. */
+export function isPriorityId(value: unknown): value is number {
+  return value === BLOCKER_PRIORITY_ID || isNonNegativeInteger(value);
+}
+
+/** How the blocker level is typed and printed. */
+export const BLOCKER_PRIORITY_TEXT = 'blocker';
+
+/** A priority as the CLI prints and takes it: `blocker`, then `p0`, `p1` and so on, most urgent first. */
 export function priorityText(priority: number): string {
-  return `p${priority}`;
+  return priority === BLOCKER_PRIORITY_ID ? BLOCKER_PRIORITY_TEXT : `p${priority}`;
 }
 
 /**
@@ -84,7 +129,7 @@ export function priorityText(priority: number): string {
  */
 export const WORK_CLASS_NAME = /^[A-Za-z][A-Za-z0-9 _-]{0,31}$/;
 
-/** Whether a priority is at the top: `p1`, or a `p0` above it, so an urgent task never falls out of a top count. */
+/** Whether a priority is at the top: `p1`, or a `p0` or blocker above it, so an urgent task never falls out of a top count. */
 export function isTopPriority(priority: number): boolean {
   return priority <= 1;
 }

@@ -1,5 +1,4 @@
 // Copied from teamrig's src/config/launch.ts by scripts/sync-core.ts: change it there, then run the sync.
-import { DEFAULT_LEAD_LAUNCH } from './defaults.ts';
 import type { Check } from './reader.ts';
 import { EFFORT_LEVELS, isEffortLevel, type KitConfig, type LaunchConfig } from './types.ts';
 
@@ -7,32 +6,17 @@ import { EFFORT_LEVELS, isEffortLevel, type KitConfig, type LaunchConfig } from 
 export const DEFAULT_MODEL_ALIAS = 'default';
 
 /**
- * The model aliases Claude Code documents for `--model` and `/model`: `best` is Fable where the
- * account has it, else Opus; `opusplan` plans on Opus and works on Sonnet; `[1m]` asks for the
- * 1M-token context window.
+ * The shape of a model name any host could take: an alias or a full id, with a provider or date part and an optional
+ * bracketed window suffix such as `[1m]`. Which names a host really runs is its models port's `problemOf`, asked
+ * where a name is used (hire, open, doctor), so a team config loads on every host.
  */
-export const MODEL_ALIASES = [
-  DEFAULT_MODEL_ALIAS,
-  'best',
-  'fable',
-  'opus',
-  'sonnet',
-  'haiku',
-  'opusplan',
-  'fable[1m]',
-  'opus[1m]',
-  'sonnet[1m]',
-  'opusplan[1m]',
-] as const;
-
-/** A full model id, such as `claude-opus-5-5`, with an optional `[1m]` window suffix. */
-export const MODEL_ID_PATTERN = /^claude-[a-z0-9]+(?:[.@-][a-z0-9]+)*(?:\[1m\])?$/;
-export const MODEL_ID_MAX_LENGTH = 100;
+export const MODEL_NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._@:/-]*(?:\[[a-z0-9]+\])?$/;
+export const MODEL_NAME_MAX_LENGTH = 100;
 
 export const isModel: Check<string> = (model) =>
-  MODEL_ALIASES.some((alias) => alias === model) || (model.length <= MODEL_ID_MAX_LENGTH && MODEL_ID_PATTERN.test(model))
+  model.length <= MODEL_NAME_MAX_LENGTH && MODEL_NAME_PATTERN.test(model)
     ? undefined
-    : `expected a model alias (${MODEL_ALIASES.join(', ')}) or a model id starting claude-`;
+    : `expected a model name: a letter or digit, then letters, digits or . _ @ : / -, at most ${MODEL_NAME_MAX_LENGTH} characters`;
 
 export const isEffort: Check<string> = (effort) => (isEffortLevel(effort) ? undefined : `expected one of ${EFFORT_LEVELS.join(', ')}`);
 
@@ -46,12 +30,29 @@ export function ownLaunchOf(config: KitConfig, id: string): LaunchConfig {
 }
 
 /**
- * The model and effort a session starts on: its own `launch` entry, and for the lead
- * `DEFAULT_LEAD_LAUNCH` under each key the entry leaves unset. Other sessions leave unset keys to Claude Code.
+ * The model and effort a session starts on: its own `launch` entry, and for the lead `leadDefault` (the host's lead
+ * default, src/cli/host.ts `leadLaunchOf`) under each key the entry leaves unset. Other sessions leave unset keys to
+ * the host.
  */
-export function launchOf(config: KitConfig, id: string): LaunchConfig {
+export function launchOf(config: KitConfig, id: string, leadDefault: LaunchConfig): LaunchConfig {
   const own = ownLaunchOf(config, id);
-  return config.roles.lead === id ? { ...DEFAULT_LEAD_LAUNCH, ...own } : own;
+  return config.roles.lead === id ? { ...leadDefault, ...own } : own;
+}
+
+/** What a launch takes from the host it runs on (src/cli/host.ts `launchHostOf`). */
+export interface LaunchHost {
+  /** The lead's start under each key its `launch` entry leaves unset, as `launchOf` takes it. */
+  readonly leadDefault: LaunchConfig;
+  /** Why the host would not run a model name, or undefined when it would; a host that knows no models takes any. */
+  readonly modelProblem: Check<string>;
+}
+
+/**
+ * Why a launch's model will not run on the host, or undefined: a name of the right shape the host refuses, such as
+ * another provider's model. The default model is the host's own, so it always runs.
+ */
+export function launchModelProblem(launch: LaunchConfig, host: Pick<LaunchHost, 'modelProblem'>): string | undefined {
+  return isDefaultModel(launch.model) ? undefined : host.modelProblem(launch.model);
 }
 
 /** True when the settings leave the model to Claude Code. */
