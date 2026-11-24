@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.84.0](https://github.com/teamrig/teamrig-pane/compare/teamrig-pane-v0.83.1...teamrig-pane-v0.84.0) (2026-11-24)
+
+
+### Features
+
+* **release:** the marketplace installs the pane from the release branch (T4363) ([4bababb](https://github.com/teamrig/teamrig-pane/commit/4bababb0952103f42c07f84c50a5f2a654e6c548))
+
+
+### Bug Fixes
+
+* **ci:** the local gate and the ui archive find tsc as Node finds a package, so a worktree without node_modules runs ([bb31193](https://github.com/teamrig/teamrig-pane/commit/bb31193be75d2a494f5cd5ea47000464935f60b6))
+
 ## [0.83.1](https://github.com/teamrig/teamrig-pane/compare/teamrig-pane-v0.83.0...teamrig-pane-v0.83.1) (2026-11-23)
 
 
