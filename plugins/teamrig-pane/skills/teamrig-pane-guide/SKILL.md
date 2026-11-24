@@ -662,9 +662,9 @@ no team, no config teamrig can read, or a failed read of the team folder list, o
 worked, the view says which. Any other team folder it cannot read gets a `WARN team <id> could not be read: …` line
 above the tree, and that team draws as last read, or is left out until a read of it works.
 
-`[Meet]` runs `teamrig meet <session>`: teamrig wakes a running session with an inbox line asking it to bring the owner
-its cards now, or opens it in a new tab to do so, and refuses one with no card waiting on the owner. What teamrig
-answered leads the tab: `Asking web for its cards…`, then `Asked web for its cards:` with teamrig's lines, or
+`[Meet]` runs `teamrig meet <session>`: teamrig brings a running session's tab to the front, then wakes it with an inbox
+line asking it to bring the owner its cards now, or opens it in a new tab to do so, and refuses one with no card waiting
+on the owner. What teamrig answered leads the tab: `Asking web for its cards…`, then `Asked web for its cards:` with teamrig's lines, or
 `web was not asked:` and why. The session's row answers too, in the press's place, so the answer shows where it was
 pressed: `Asking…`, then `Asked 19:41 IST`, when teamrig asked it, on the team's clock, with no press until the Teams
 tab opens again from the switch or the session starts, so it cannot be asked twice; a refused one keeps the press,
