@@ -1,11 +1,27 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
+import { isRecord } from './guards.ts';
 import { MARKETPLACE, readCatalog } from './marketplace.ts';
 
 describe('the marketplace catalog this repo ships', () => {
+  const text = readFileSync(new URL(`../../${MARKETPLACE}`, import.meta.url), 'utf8');
+
   it('gives no version in an entry, which Claude Code would ignore for the one in plugin.json', () => {
-    assert.deepEqual(readCatalog(readFileSync(new URL(`../../${MARKETPLACE}`, import.meta.url), 'utf8')).problems, []);
+    assert.deepEqual(readCatalog(text).problems, []);
+  });
+
+  it('installs the pane from the release branch, so unreleased commits on main never reach a user (T4363)', () => {
+    const catalog: unknown = JSON.parse(text);
+    const list: unknown = isRecord(catalog) ? catalog['plugins'] : undefined;
+    const entries: readonly unknown[] = Array.isArray(list) ? list : [];
+    const pane = entries.filter(isRecord).find((entry) => entry['name'] === 'teamrig-pane');
+    assert.deepEqual(pane?.['source'], {
+      source: 'git-subdir',
+      url: 'https://github.com/teamrig/teamrig-pane.git',
+      path: 'plugins/teamrig-pane',
+      ref: 'release',
+    });
   });
 });
 

@@ -28,8 +28,9 @@ the pane says so and how to fix it.
 
 ## Update
 
-Claude Code moves an install only when the version in the plugin's `plugin.json` rises, and every release raises it.
-To take the newest one:
+The marketplace installs the pane from this repo's `release` branch, which moves only when a release is cut, so
+commits on `main` that are not released yet never reach you. Claude Code moves an install only when the version in
+the plugin's `plugin.json` rises, and every release raises it. To take the newest one:
 
 ```sh
 claude plugin marketplace update teamrig-pane

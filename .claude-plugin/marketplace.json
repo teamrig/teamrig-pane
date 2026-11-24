@@ -7,7 +7,12 @@
   "plugins": [
     {
       "name": "teamrig-pane",
-      "source": "./plugins/teamrig-pane",
+      "source": {
+        "source": "git-subdir",
+        "url": "https://github.com/teamrig/teamrig-pane.git",
+        "path": "plugins/teamrig-pane",
+        "ref": "release"
+      },
       "description": "Docks this session's tasks from the team's task register, and its git changes, on the right of Claude Code's fullscreen UI, live"
     }
   ]
