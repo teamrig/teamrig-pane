@@ -1,6 +1,7 @@
 // The Teams tab's presses on a session's row that run the teamrig CLI on that session (T2298), each act its words:
-// [Meet] (T1297) runs `teamrig meet <session>`, which wakes a running session with an inbox line asking it to bring the
-// owner its cards, or opens it fresh in a new tab to do so, and refuses a session with no card waiting on the owner now.
+// [Meet] (T1297) runs `teamrig meet <session>`, which brings a running session's tab to the front (teamrig T4211), then
+// wakes it with an inbox line asking it to bring the owner its cards, or opens it fresh in a new tab to do so, and
+// refuses a session with no card waiting on the owner now.
 // [Wake] runs `teamrig owner wake <team>/<session>`, the owner's wake by hand: an idle running session gets an inbox
 // line that wakes it to work its task list, one not running opens in a new tab, and a tab in a turn, at a tool call or
 // waiting on the person is refused with nothing posted.
