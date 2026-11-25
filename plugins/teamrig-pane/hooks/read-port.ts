@@ -6,15 +6,32 @@
 // missing or cannot be read is named as a problem and the others are served, so the pane keeps what it last drew of
 // the missing one. A failure's reason may quote what the run wrote to stderr or how it broke: that is another
 // program's text as much as a document is, so every reason leaves here as the pane may draw it (shown-text.ts).
+// A register can outgrow one run (T5464): when the engine cut a run that asked for `tasks`, the other documents are
+// read again in one run and `tasks` a page at a time (interface 1.10's `--max-bytes`), the pages joined when all
+// carry one revision. The one run comes first so a small register, or one unchanged since the revision held, still
+// costs one run, and a teamrig too old to page fails as it did, its refusal named.
 // Runs the CLI only; no model calls.
 import type { StatsRange } from './core/read/index'
 import { messageOf } from './errors'
 import { readAnswer, type DocumentName, type ReadDocument } from './read-document'
 import { shownText } from './shown-text'
+import { joinedPages, nextOf } from './tasks-pages'
 import { cliArgv, failureLines, type CliRun, type TeamrigCli } from './teamrig-cli'
 
 /** A read takes no lock: far under this, unless the machine is swamped. */
 export const READ_TIMEOUT_MS = 30_000
+
+/**
+ * The bytes of tasks' JSON one page asks for: half the 4 MiB the engine keeps of a run, so the page's cuts, its
+ * envelope and the JSON escapes of control characters fit beside them.
+ */
+export const TASKS_PAGE_BYTES = 2 * 1024 * 1024
+
+/** Paged reads of `tasks` before the pane gives up on a register that changed between the pages of each one. */
+export const PAGED_READ_TRIES = 3
+
+/** One page of `tasks` to ask for: the task it starts after (null: the first page), and its size in bytes. */
+export type TasksPageAsk = { readonly after: string | null; readonly maxBytes: number }
 
 /** A document to read, and the revision the caller still holds of it (null: none, so it is read whole). */
 export type ReadAsk<Name extends DocumentName = DocumentName> = { readonly name: Name; readonly held: string | null }
@@ -70,9 +87,10 @@ export function askerWords(asker: ReadAsker): string[] {
 
 /**
  * The CLI's words for one read of `asks` as `asker`. The revisions held go in one `--unless`, a comma list: teamrig's
- * parser refuses a flag given twice. `narrowing` adds a flag for each of its fields given.
+ * parser refuses a flag given twice. `narrowing` adds a flag for each of its fields given, and `page` asks for one
+ * page of `tasks`.
  */
-export function readWords(asks: readonly ReadAsk[], asker: ReadAsker, narrowing: ReadNarrowing = {}): string[] {
+export function readWords(asks: readonly ReadAsk[], asker: ReadAsker, narrowing: ReadNarrowing = {}, page: TasksPageAsk | null = null): string[] {
   const words = ['read', ...asks.map(ask => ask.name), '--json']
   const held = asks.flatMap(ask => (ask.held === null ? [] : [`${ask.name}=${ask.held}`]))
   if (held.length > 0) words.push('--unless', held.join(','))
@@ -80,6 +98,10 @@ export function readWords(asks: readonly ReadAsk[], asker: ReadAsker, narrowing:
   if (narrowing.team !== undefined) words.push('--team', narrowing.team)
   if (narrowing.owner !== undefined) words.push('--owner', narrowing.owner)
   if (narrowing.range !== undefined) words.push('--range', narrowing.range)
+  if (page !== null) {
+    words.push('--max-bytes', String(page.maxBytes))
+    if (page.after !== null) words.push('--after', page.after)
+  }
   return words
 }
 
@@ -112,9 +134,84 @@ export function readResult<Name extends DocumentName>(run: CliRun, asks: readonl
   return { kind: 'read', documents, problems }
 }
 
+/** Where the CLI is, how to run it, and who asks with what narrowing: what every run of one read shares. */
+type ReadContext = {
+  readonly main: string
+  readonly ports: ReadPorts
+  readonly asker: ReadAsker
+  readonly narrowing: ReadNarrowing
+}
+
+/** One paged read of `tasks`: the joined document, why it read none, or that the register moved between its pages. */
+type PagedTasks =
+  | { readonly kind: 'read'; readonly document: ReadDocument; readonly problems: readonly string[] }
+  | { readonly kind: 'failed'; readonly reason: string }
+  | { readonly kind: 'moved' }
+
+function runRead(context: ReadContext, asks: readonly ReadAsk[], page: TasksPageAsk | null): Promise<CliRun> {
+  return context.ports.run(cliArgv(context.main, readWords(asks, context.asker, context.narrowing, page)), READ_TIMEOUT_MS)
+}
+
+/** Why a paged read read nothing, after the one run that was cut. */
+function pagedFailure(reason: string): { readonly kind: 'failed'; readonly reason: string } {
+  return failed(`teamrig read printed more than the pane can take in one run, and reading tasks a page at a time failed: ${reason}`)
+}
+
 /**
- * Reads `asks` as `asker`, narrowed by `narrowing`, in one run of `cli`; with none to read it runs nothing. A run that
- * cannot finish is a failure, never a throw.
+ * Reads `tasks` page by page once, the first page handing back the revision held. A page of another revision than the
+ * first means the register changed between them: the read is `moved`, to start again. A cursor served twice would
+ * page forever, so it ends the read as a failure.
+ */
+async function readTaskPagesOnce<Name extends DocumentName>(context: ReadContext, ask: ReadAsk<Name>): Promise<PagedTasks> {
+  const pages: ReadDocument[] = []
+  const problems: string[] = []
+  const cursors = new Set<string>()
+  let after: string | null = null
+  do {
+    const asked: ReadAsk<Name> = pages.length === 0 ? ask : { name: ask.name, held: null }
+    const result = readResult(await runRead(context, [asked], { after, maxBytes: TASKS_PAGE_BYTES }), [asked])
+    if (result.kind === 'failed') return pagedFailure(result.reason)
+    const page = result.documents.get(ask.name)
+    if (page === undefined) return pagedFailure(result.problems.join('; '))
+    problems.push(...result.problems)
+    if (page.isUnchanged) return { kind: 'read', document: page, problems }
+    const [first] = pages
+    if (first !== undefined && page.revision !== first.revision) return { kind: 'moved' }
+    pages.push(page)
+    after = nextOf(page)
+    if (after !== null && cursors.has(after)) return pagedFailure(`teamrig served the page after ${after} twice`)
+    if (after !== null) cursors.add(after)
+  } while (after !== null)
+  const [first, ...rest] = pages
+  return first === undefined ? pagedFailure('teamrig served no page') : { kind: 'read', document: joinedPages(first, rest), problems }
+}
+
+/** Reads `tasks` page by page, again from the first page while the register moves between pages, at most `PAGED_READ_TRIES` times. */
+async function readTaskPages<Name extends DocumentName>(context: ReadContext, ask: ReadAsk<Name>): Promise<PagedTasks> {
+  for (let attempt = 0; attempt < PAGED_READ_TRIES; attempt += 1) {
+    const read = await readTaskPagesOnce(context, ask)
+    if (read.kind !== 'moved') return read
+  }
+  return pagedFailure(`the register changed between its pages ${PAGED_READ_TRIES} times in a row`)
+}
+
+/** Reads `asks` after their one run was cut: the documents but `tasks` in one run, `tasks` a page at a time. */
+async function readPaged<Name extends DocumentName>(context: ReadContext, asks: readonly ReadAsk<Name>[], tasks: ReadAsk<Name>): Promise<ReadResult<Name>> {
+  const others = asks.filter(ask => ask.name !== tasks.name)
+  const rest = others.length === 0 ? nothingRead<Name>() : readResult(await runRead(context, others, null), others)
+  if (rest.kind === 'failed') return rest
+  const paged = await readTaskPages(context, tasks)
+  if (paged.kind === 'failed') return paged
+  if (paged.kind === 'moved') return pagedFailure('the register kept changing')
+  const documents = new Map(rest.documents)
+  documents.set(tasks.name, paged.document)
+  return { kind: 'read', documents, problems: [...rest.problems, ...paged.problems] }
+}
+
+/**
+ * Reads `asks` as `asker`, narrowed by `narrowing`, in one run of `cli`, or, when the engine cut a run that asked for
+ * `tasks`, with `tasks` read a page at a time; with none to read it runs nothing. A run that cannot finish is a
+ * failure, never a throw.
  */
 export async function readDocuments<Name extends DocumentName>(
   cli: TeamrigCli,
@@ -125,8 +222,12 @@ export async function readDocuments<Name extends DocumentName>(
 ): Promise<ReadResult<Name>> {
   if (asks.length === 0) return nothingRead()
   if (cli.kind === 'missing') return failed(cli.problem)
+  const context: ReadContext = { main: cli.main, ports, asker, narrowing }
   try {
-    return readResult(await ports.run(cliArgv(cli.main, readWords(asks, asker, narrowing)), READ_TIMEOUT_MS), asks)
+    const run = await runRead(context, asks, null)
+    const tasks = asks.find(ask => ask.name === 'tasks')
+    if (run.exitCode === 0 && run.isStdoutTruncated && tasks !== undefined) return await readPaged(context, asks, tasks)
+    return readResult(run, asks)
   } catch (error) {
     return failed(`teamrig read did not finish: ${messageOf(error)}`)
   }

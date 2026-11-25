@@ -680,6 +680,13 @@ under a `WARN` line naming why (`teamrig read did not finish: …`, `teamrig rea
 the pane never falls back to reading the team's files for it. A document of another major interface version
 is not read, and the line says which side to update. One run takes about half a second.
 
+A register too big for one run (the engine keeps 4 MiB of what a run prints) is still read whole: when a run
+asking for `tasks` was cut, the pane reads the other documents again in one run and `tasks` a page of 2 MiB at
+a time (`--max-bytes`, teamrig interface 1.10), joining the pages when all carry one revision and starting
+again from the first page when the register moved between them, three times at most. A register unchanged
+since the last read still costs one run. A teamrig older than 1.10 cannot page: the `WARN` line then names its
+refusal, and updating teamrig is the fix.
+
 The `plan` document (the order teamrig plans the tasks in, with what each waits on) is served from teamrig's
 interface 1.1. An older teamrig refuses a run that names it, so the pane asks again without it: the other
 documents are drawn as ever, under a `WARN` line with teamrig's reason (`unknown document "plan"; …`) until
