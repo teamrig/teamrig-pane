@@ -76,6 +76,12 @@ Every change ships tests, so the next change cannot break it unnoticed:
   `tsc` emits and Node runs with no loader: no `.tsx`, and no import of a file that is not emitted.
   `tools/ui-archive/cli.test.ts` (in `npm test`) builds the archive of the tree and runs it under
   plain `node`.
+- To try the dedicated UI of your checkout, run `npm run ui:dev` (`-- --team <team>` or
+  `-- --session <id>` to pin it). It builds the UI as the archive holds it into `.tmp/ui-dev/` and
+  runs it in this terminal under the same Node.js, in the folder you ran npm from, with your whole
+  environment. It calls the `teamrig` command on your PATH, which is your installed teamrig. This
+  replaces teamrig's `ui.path` key, which teamrig is removing so that `teamrig ui` only ever starts
+  the released UI that its release pins.
 
 `npm run check` checks that git runs the repo hooks, then runs the gates CI runs on the tree: typecheck (`tools/` under `tsconfig.json`, the plugin's
 hooks, tests and scripts under `tsconfig.pane.json`), coverage, the plugin test gate and
