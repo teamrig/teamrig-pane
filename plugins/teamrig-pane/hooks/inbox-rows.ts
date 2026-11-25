@@ -28,8 +28,11 @@ const LINE_NOUN: Noun = { one: 'line', many: 'lines' }
 /** The Find field's query on the Inbox view and the lines it names (inbox-search.ts searchInbox), the last written first. */
 export type InboxSearch = { query: string; hits: readonly InboxHit[] }
 
-/** What the view draws from: the session's area (with no area, its team's sessions), its inbox lines and the clock they print on. */
-export type InboxSource = Pick<Snapshot, 'area' | 'team' | 'leads' | 'inbox' | 'now' | 'timeZone'>
+/**
+ * What the view draws from: the session's area (with no area, its team's sessions, or with none read the problem that
+ * kept them unread), its inbox lines and the clock they print on.
+ */
+export type InboxSource = Pick<Snapshot, 'area' | 'team' | 'leads' | 'problem' | 'inbox' | 'now' | 'timeZone'>
 
 /** Where a search's words matched in each of a line's fields. */
 type Marks = (field: InboxSearchedField) => readonly Mark[]
