@@ -199,10 +199,15 @@ export type TieHint = string | null
 /**
  * What the Tasks and Inbox views show while the tab is tied to no session (it has no area): the team's sessions, each
  * a press that ties the tab to it, then the front end's own words for it, `tie`, when it has any; with no team config
- * read, those words alone, or with none only that the tab is tied to no session.
+ * read, those words alone, or with none only that the tab is tied to no session. With no sessions held while the
+ * snapshot names a problem, the tab's session is unknown rather than unset: the read that would name it failed (a
+ * run's output cut past the pane's cap fails the whole run, sessions with it), so the block says that instead.
  */
-export function noSessionBlock(key: string, snap: Pick<Snapshot, 'team' | 'leads'>, tie: TieHint = null): Block {
+export function noSessionBlock(key: string, snap: Pick<Snapshot, 'team' | 'leads' | 'problem'>, tie: TieHint = null): Block {
   const team = snap.team === null ? '' : ` of team ${snap.team}`
+  if (snap.leads === null && snap.problem !== null) {
+    return single(key, [{ text: `Which session${team} this tab is stays unknown until teamrig's sessions are read: the problem above says why.`, dim: true }])
+  }
   if (snap.leads === null) return single(key, [{ text: `This tab is not tied to a session${team} yet${tie === null ? '.' : `: ${tie} ties it to one.`}`, dim: true }])
   const sessions = teamSessions(snap.leads).flatMap((id, i): Span[] => (i === 0 ? [{ text: id, pins: id }] : [SESSION_GAP, { text: id, pins: id }]))
   return {

@@ -675,7 +675,7 @@ describe('rows', () => {
 
   test("a tab tied to no session lists its team's sessions, the lead first, docked each a press of its own, then the front end's words for tying one; with no team config read, those words alone", () => {
     const leads: TeamLeads = { lead: 'lead', leaderOf: { api: 'lead', etl: 'lead' } }
-    const block = noSessionBlock('no-area', { team: 'web', leads }, TIE_HINT)
+    const block = noSessionBlock('no-area', { team: 'web', leads, problem: null }, TIE_HINT)
     expect(block.rows.map(row => row.spans.map(span => span.text).join(''))).toEqual([
       'This tab is not tied to a session of team web yet. Press the one this tab is:',
       'lead   api   etl',
@@ -693,14 +693,28 @@ describe('rows', () => {
     // The Tasks view draws it in place of the area's tasks.
     const snap: Snapshot = { tasks: [], area: null, areaSource: null, unreadInbox: null, inbox: [], problem: null, ...NO_TEAM, team: 'web', leads, ...SNAPSHOT_SETTINGS, now: NOW }
     expect(paneBlocks(snap, 'mine', NOTHING_EXPANDED, null, [], null, TIE_HINT)).toEqual([block])
-    const lone = (team: string | null) => noSessionBlock('no-area', { team, leads: null }, TIE_HINT).rows.map(row => row.spans.map(span => span.text).join(''))
+    const lone = (team: string | null) => noSessionBlock('no-area', { team, leads: null, problem: null }, TIE_HINT).rows.map(row => row.spans.map(span => span.text).join(''))
     expect(lone('web')).toEqual(['This tab is not tied to a session of team web yet: /teamrig-pane <session> ties it to one.'])
     expect(lone(null)).toEqual(['This tab is not tied to a session yet: /teamrig-pane <session> ties it to one.'])
   })
 
+  test('with no sessions held because the read failed, the tab says its session is unknown, never that it is tied to none', () => {
+    const problem = 'teamrig read printed more than the pane can take in one run'
+    const block = noSessionBlock('no-area', { team: 'web', leads: null, problem }, TIE_HINT)
+    expect(block.rows.map(row => row.spans.map(span => span.text).join(''))).toEqual([
+      "Which session of team web this tab is stays unknown until teamrig's sessions are read: the problem above says why.",
+    ])
+    // The Tasks view draws it in place of the area's tasks, under the problem it points to.
+    const snap: Snapshot = { tasks: [], area: null, areaSource: null, unreadInbox: null, inbox: [], problem, ...NO_TEAM, team: 'web', leads: null, ...SNAPSHOT_SETTINGS, now: NOW }
+    const drawn = paneBlocks(snap, 'mine', NOTHING_EXPANDED, null, [], null, TIE_HINT)
+    expect(drawn.map(shown => shown.key)).toEqual(['problem', 'no-area'])
+    expect(drawn[0]?.rows.map(row => row.spans.map(span => span.text).join(''))).toEqual([`WARN ${problem}`])
+    expect(drawn[1]).toEqual(block)
+  })
+
   test('a front end with no words for tying a tab shows the sessions to press alone, and with no team config read only that the tab is tied to none', () => {
     const leads: TeamLeads = { lead: 'lead', leaderOf: { api: 'lead' } }
-    const block = noSessionBlock('no-area', { team: 'web', leads })
+    const block = noSessionBlock('no-area', { team: 'web', leads, problem: null })
     expect(block.rows.map(row => [row.key, row.spans.map(span => span.text).join('')])).toEqual([
       ['no-area', 'This tab is not tied to a session of team web yet. Press the one this tab is:'],
       ['no-area:sessions', 'lead   api'],
@@ -708,7 +722,7 @@ describe('rows', () => {
     // The Tasks view passes no words on unless its front end gives some.
     const snap: Snapshot = { tasks: [], area: null, areaSource: null, unreadInbox: null, inbox: [], problem: null, ...NO_TEAM, team: 'web', leads, ...SNAPSHOT_SETTINGS, now: NOW }
     expect(paneBlocks(snap, 'mine')).toEqual([block])
-    const lone = (team: string | null) => noSessionBlock('no-area', { team, leads: null }).rows.map(row => row.spans.map(span => span.text).join(''))
+    const lone = (team: string | null) => noSessionBlock('no-area', { team, leads: null, problem: null }).rows.map(row => row.spans.map(span => span.text).join(''))
     expect(lone('web')).toEqual(['This tab is not tied to a session of team web yet.'])
     expect(lone(null)).toEqual(['This tab is not tied to a session yet.'])
   })

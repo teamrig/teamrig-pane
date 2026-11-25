@@ -8,7 +8,7 @@ import { SEPARATOR, type Block } from '../hooks/rows'
 import { HOUR, INBOX_LINES, INBOX_UNREAD_FROM, NOW } from './fixtures'
 
 /** The inbox of INBOX_LINES at NOW, on a team whose clock is Israel's (`IDT`, three hours ahead of UTC). */
-const SOURCE: InboxSource = { area: 'po', team: null, leads: null, inbox: inboxItems(INBOX_LINES, INBOX_UNREAD_FROM, NOW), now: NOW, timeZone: 'Asia/Jerusalem' }
+const SOURCE: InboxSource = { area: 'po', team: null, leads: null, problem: null, inbox: inboxItems(INBOX_LINES, INBOX_UNREAD_FROM, NOW), now: NOW, timeZone: 'Asia/Jerusalem' }
 /** Each block as its key and its rows' words. */
 const words = (blocks: Block[]): [string, string[]][] => blocks.map(block => [block.key, block.rows.map(row => row.spans.map(span => span.text).join(''))])
 
@@ -52,6 +52,13 @@ describe('inboxBlocks', () => {
       ['inbox:no-area', ['This tab is not tied to a session of team web yet. Press the one this tab is:', 'lead   api']],
     ])
     expect(words(inboxBlocks({ ...SOURCE, area: null }))).toEqual([['inbox:no-area', ['This tab is not tied to a session yet.']]])
+  })
+
+  test('with no sessions read because the read failed, its session is unknown, never untied', () => {
+    const problem = 'teamrig read printed more than the pane can take in one run'
+    expect(words(inboxBlocks({ ...SOURCE, area: null, team: 'web', problem }, null, '/teamrig-pane <session>'))).toEqual([
+      ['inbox:no-area', ["Which session of team web this tab is stays unknown until teamrig's sessions are read: the problem above says why."]],
+    ])
   })
 
   test('a dim line says why no line shows: none of the last 24 hours and none unread', () => {
