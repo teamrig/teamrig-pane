@@ -2,9 +2,20 @@
 // held of each handed back; a failed or cut run is a failure with its reason and no documents; a document that is
 // missing, unreadable or unchanged from nothing held is a named problem beside the ones that were read; a missing CLI
 // or a run that does not finish is a failure, never a throw; a failure's reason holds nothing a terminal would act
-// on (T4742).
+// on (T4742). A cut run that asked for tasks reads them a page at a time, the pages of one revision joined, again
+// from the first page when the revision moves, a bounded number of times (T5464).
 import { describe, expect, test } from 'claude-code/testing'
-import { READ_TIMEOUT_MS, readDocuments, readResult, readWords, type ReadAsk, type ReadAsker, type ReadPorts } from '../hooks/read-port'
+import {
+  PAGED_READ_TRIES,
+  READ_TIMEOUT_MS,
+  TASKS_PAGE_BYTES,
+  readDocuments,
+  readResult,
+  readWords,
+  type ReadAsk,
+  type ReadAsker,
+  type ReadPorts,
+} from '../hooks/read-port'
 import { CONTROL_SHOWN } from '../hooks/shown-text'
 import { cliArgv, type CliRun, type TeamrigCli } from '../hooks/teamrig-cli'
 
@@ -176,10 +187,125 @@ describe('readDocuments', () => {
     })
   })
 
+  test('a cut run that asked for no tasks stays a failure, with no second run', async () => {
+    const ports = portsOf({ ...ok(INBOX), isStdoutTruncated: true })
+    expect(await readDocuments(CLI, ports, [{ name: 'inbox', held: null }], AS_API)).toEqual({
+      kind: 'failed',
+      reason: 'teamrig read printed more than the pane can take in one run',
+    })
+    expect(ports.runs).toHaveLength(1)
+  })
+
   test('a run that broke is told with nothing in it a terminal would act on', async () => {
     expect(await readDocuments(CLI, portsOf(new Error('spawn \u0007node\u009b ENOENT')), WHOLE, AS_API)).toEqual({
       kind: 'failed',
       reason: `teamrig read did not finish: spawn ${CONTROL_SHOWN}node${CONTROL_SHOWN} ENOENT`,
     })
+  })
+})
+
+/** Ports answering each run with the next of `answers`, in order; a run past them is a failed run. */
+function scriptedPorts(...answers: readonly CliRun[]): ReadPorts & Recorded {
+  const runs: Recorded['runs'] = []
+  return {
+    runs,
+    run: (argv, timeoutMs) => {
+      const answer = answers[runs.length] ?? { exitCode: 9, stdout: '', stderr: 'no more runs scripted', isStdoutTruncated: false }
+      runs.push({ argv, timeoutMs })
+      return Promise.resolve(answer)
+    },
+  }
+}
+
+/** A page of tasks at `revision` serving `ids`, naming `next` the task the page after starts after. */
+function page(revision: string, ids: readonly string[], next: string | null): Readonly<Record<string, unknown>> {
+  return { interface: '1.10', document: 'tasks', revision, tasks: ids.map(id => ({ id })), cuts: [], retired: 4, next }
+}
+
+const CUT: CliRun = { ...ok(TASKS, INBOX), isStdoutTruncated: true }
+const PAGE_BYTES = String(TASKS_PAGE_BYTES)
+
+/** The ids of the tasks a read served, or the failure it was. */
+function servedIds(result: Awaited<ReturnType<typeof readDocuments>>): unknown {
+  if (result.kind !== 'read') return result
+  const tasks = result.documents.get('tasks')?.fields['tasks']
+  return Array.isArray(tasks) ? tasks.map((task: unknown) => (typeof task === 'object' && task !== null && 'id' in task ? task.id : null)) : null
+}
+
+describe('readDocuments past one run (T5464)', () => {
+  test('a cut run that asked for tasks reads the others in one run and tasks page by page, joined', async () => {
+    const ports = scriptedPorts(CUT, ok(INBOX), ok(page('r8', ['T1', 'T2'], 'T2')), ok(page('r8', ['T3'], null)))
+    const result = await readDocuments(CLI, ports, WHOLE, AS_API, { owner: 'api' })
+    expect(servedIds(result)).toEqual(['T1', 'T2', 'T3'])
+    expect(result.kind === 'read' ? [...result.documents.keys()] : null).toEqual(['inbox', 'tasks'])
+    expect(result.kind === 'read' ? result.documents.get('tasks')?.fields['next'] : 'none').toBeNull()
+    const asker = ['--session', 'api', '--conversation', 'c-1', '--owner', 'api']
+    expect(ports.runs.map(run => run.argv)).toEqual([
+      cliArgv(CLI.main, ['read', 'tasks', 'inbox', '--json', ...asker]),
+      cliArgv(CLI.main, ['read', 'inbox', '--json', ...asker]),
+      cliArgv(CLI.main, ['read', 'tasks', '--json', ...asker, '--max-bytes', PAGE_BYTES]),
+      cliArgv(CLI.main, ['read', 'tasks', '--json', ...asker, '--max-bytes', PAGE_BYTES, '--after', 'T2']),
+    ])
+  })
+
+  test('only the first page hands back the revision held, and an unchanged first page is the answer', async () => {
+    const unchanged = { interface: '1.10', document: 'tasks', revision: 'r7', unchanged: true }
+    const ports = scriptedPorts(CUT, ok(INBOX), ok(unchanged))
+    const result = await readDocuments(CLI, ports, [{ name: 'tasks', held: 'r7' }, { name: 'inbox', held: null }], UNTIED)
+    expect(result.kind === 'read' ? result.documents.get('tasks')?.isUnchanged : null).toBe(true)
+    expect(ports.runs[2]?.argv).toEqual(cliArgv(CLI.main, ['read', 'tasks', '--json', '--unless', 'tasks=r7', '--conversation', 'c-1', '--max-bytes', PAGE_BYTES]))
+  })
+
+  test('a page of another revision starts the pages again from the first', async () => {
+    const ports = scriptedPorts(
+      CUT,
+      ok(INBOX),
+      ok(page('r8', ['T1'], 'T1')),
+      ok(page('r9', ['T2'], null)),
+      ok(page('r9', ['T1'], 'T1')),
+      ok(page('r9', ['T2', 'T4'], null)),
+    )
+    expect(servedIds(await readDocuments(CLI, ports, WHOLE, UNTIED))).toEqual(['T1', 'T2', 'T4'])
+    expect(ports.runs).toHaveLength(6)
+  })
+
+  test('a register that changes between the pages of every try is a failure, after a bounded number of tries', async () => {
+    const moving = Array.from({ length: PAGED_READ_TRIES }, (_, attempt) => [ok(page(`a${attempt}`, ['T1'], 'T1')), ok(page(`b${attempt}`, ['T2'], null))]).flat()
+    const ports = scriptedPorts(CUT, ok(INBOX), ...moving)
+    expect(await readDocuments(CLI, ports, WHOLE, UNTIED)).toEqual({
+      kind: 'failed',
+      reason: `teamrig read printed more than the pane can take in one run, and reading tasks a page at a time failed: the register changed between its pages ${PAGED_READ_TRIES} times in a row`,
+    })
+    expect(ports.runs).toHaveLength(2 + 2 * PAGED_READ_TRIES)
+  })
+
+  test('a teamrig too old to page is a failure naming its refusal', async () => {
+    const refused: CliRun = { exitCode: 2, stdout: '', stderr: 'USAGE: unknown flag --max-bytes\n', isStdoutTruncated: false }
+    expect(await readDocuments(CLI, scriptedPorts(CUT, ok(INBOX), refused), WHOLE, UNTIED)).toEqual({
+      kind: 'failed',
+      reason: 'teamrig read printed more than the pane can take in one run, and reading tasks a page at a time failed: USAGE: unknown flag --max-bytes',
+    })
+  })
+
+  test('a cursor served twice ends the read as a failure, never a loop', async () => {
+    const ports = scriptedPorts(CUT, ok(INBOX), ok(page('r8', ['T1'], 'T1')), ok(page('r8', ['T1'], 'T1')))
+    expect(await readDocuments(CLI, ports, WHOLE, UNTIED)).toEqual({
+      kind: 'failed',
+      reason: 'teamrig read printed more than the pane can take in one run, and reading tasks a page at a time failed: teamrig served the page after T1 twice',
+    })
+    expect(ports.runs).toHaveLength(4)
+  })
+
+  test('a read of tasks alone pages with no other run', async () => {
+    const ports = scriptedPorts({ ...ok(TASKS), isStdoutTruncated: true }, ok(page('r8', ['T1'], null)))
+    expect(servedIds(await readDocuments(CLI, ports, [{ name: 'tasks', held: null }], UNTIED))).toEqual(['T1'])
+    expect(ports.runs).toHaveLength(2)
+  })
+
+  test('a failed read of the other documents is the answer, and no page is asked', async () => {
+    const refused: CliRun = { exitCode: 2, stdout: '', stderr: 'REFUSED: no team here\n', isStdoutTruncated: false }
+    const ports = scriptedPorts(CUT, refused)
+    expect(await readDocuments(CLI, ports, WHOLE, UNTIED)).toEqual({ kind: 'failed', reason: 'REFUSED: no team here' })
+    expect(ports.runs).toHaveLength(2)
   })
 })
