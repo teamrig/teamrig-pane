@@ -244,7 +244,12 @@ describe('a program with no team behind it', () => {
     expect(keysHint('search', 'open', OWN_KEYS)).toBe('Typing searches · Enter: open · Esc: keys to the pane')
     expect(keysHint('result', 'open', OWN_KEYS)).toBe('On a result · Enter: open · ↑↓: move · s: search · q: quit')
     expect(keysHint('pane', null, OWN_KEYS)).toBe('Keys on the pane · s: search · q: quit')
-    expect(OWN_KEYS.page.map(each => `${each.keys}${each.words}`)).toEqual(['Esc: out of a field, else back', 'q, or ctrl+c: quit'])
+    expect(OWN_KEYS.page.map(each => `${each.keys}${each.words}`)).toEqual([
+      'Esc: out of a field, else back',
+      "y: copy the ring's words",
+      'Shift+drag: select text as the terminal does',
+      'q, or ctrl+c: quit',
+    ])
     expect(JSON.stringify(OWN_KEYS)).not.toContain('Claude')
   })
 

@@ -60,6 +60,8 @@ type Rig = {
   readonly drawn: string[][]
   /** Each drawing's underlined words, line by line. */
   readonly underlined: string[][]
+  /** Each text handed to the terminal's clipboard, in order. */
+  readonly copied: string[]
   readonly closes: () => number
   readonly over: Promise<void>
   /** Sends keys one after the other, then waits until no drawing is asked for. */
@@ -74,6 +76,7 @@ function rig(size: Size, options: RigOptions = {}): Rig {
   const store = new WatchedStore(options.store ?? new MemoryStore(STATE))
   const drawn: string[][] = []
   const underlined: string[][] = []
+  const copied: string[] = []
   const pending: (() => void)[] = []
   let now = size
   let closed = 0
@@ -91,6 +94,9 @@ function rig(size: Size, options: RigOptions = {}): Rig {
     },
     onResize: listener => {
       onResize = listener
+    },
+    copy: text => {
+      copied.push(text)
     },
     close: () => {
       closed += 1
@@ -120,6 +126,7 @@ function rig(size: Size, options: RigOptions = {}): Rig {
     store,
     drawn,
     underlined,
+    copied,
     closes: () => closed,
     over,
     idle,
@@ -148,12 +155,17 @@ const typed = (text: string): Key[] => [...text].map(char)
 const last = (app: Rig): string[] => app.drawn.at(-1) ?? []
 const shown = (app: Rig): string => last(app).join('\n')
 
-/** A click on the first cell of `words` in the last drawing. */
-function click(app: Rig, words: string): Key {
+/** The cell a pointer stands on over `words` in the last drawing: the second of them, past any bracket. */
+function cellOf(app: Rig, words: string): { readonly column: number; readonly line: number } {
   const lines = last(app)
   const line = lines.findIndex(text => text.includes(words))
   if (line < 0) throw new Error(`no "${words}" drawn in:\n${lines.join('\n')}`)
-  return { kind: 'click', column: (lines[line] ?? '').indexOf(words) + 1, line }
+  return { column: (lines[line] ?? '').indexOf(words) + 1, line }
+}
+
+/** A click on the cell `cellOf` names. */
+function click(app: Rig, words: string): Key {
+  return { kind: 'click', ...cellOf(app, words) }
 }
 
 const RUNNING = 'still running'
@@ -241,7 +253,7 @@ describe('the ring', () => {
 
   test('a move underlines the stop under the pointer, drawing again only when that stop changes', async () => {
     const app = await started(SHORT)
-    const onMeetings = click(app, '[ Meetings ]')
+    const onMeetings = cellOf(app, '[ Meetings ]')
     const move = (column: number, line: number): Key => ({ kind: 'move', column, line })
     expect(app.underlined.at(-1)).toEqual([])
     await app.keys(move(onMeetings.column, onMeetings.line))
@@ -253,6 +265,23 @@ describe('the ring', () => {
     expect(app.drawn.length).toBe(3)
     expect(app.underlined.at(-1)).toEqual([])
     expect((await app.store.read('ring')).count).toBe(0)
+  })
+
+  test('y copies the words of the stop the ring is on, and nothing while the ring is on none', async () => {
+    const app = await started(SHORT)
+    await app.keys(char('y'))
+    expect(app.copied).toEqual([])
+    await app.keys(named('back-tab'), char('y'))
+    expect(app.copied).toHaveLength(1)
+    expect(app.copied[0]).toContain('T61  Task number 11')
+    expect(app.copied[0]).toBe((app.copied[0] ?? '').trim())
+  })
+
+  test('a field typed in takes y as text, not as a copy', async () => {
+    const app = await started(SHORT)
+    await app.keys(char('s'), char('y'))
+    expect(shown(app)).toContain('Find y')
+    expect(app.copied).toEqual([])
   })
 
   test('Esc presses the way back', async () => {

@@ -4,7 +4,7 @@ import { describe, expect, test } from 'claude-code/testing'
 import type { Key } from '../ui/keys'
 import type { Size } from '../ui/paint'
 import { words } from '../ui/run'
-import { ENTER, FALLBACK, LEAVE, openTerminal, screenText, type Input, type Output } from '../ui/terminal'
+import { copyText, ENTER, FALLBACK, LEAVE, openTerminal, screenText, type Input, type Output } from '../ui/terminal'
 
 const ESC = '\u001b'
 
@@ -145,6 +145,21 @@ describe('the terminal over a process streams', () => {
     expect(input.calls).toEqual(['raw true', 'encoding utf8', 'resume', 'raw false', 'pause'])
     expect(keys).toEqual([])
     expect(sizes).toEqual([])
+  })
+
+  test('copy hands the words to the host clipboard as OSC 52 in base64, only while it holds the screen', () => {
+    expect(copyText('T1 ünï\nmore')).toBe(`${ESC}]52;c;VDEgw7xuw68KbW9yZQ==${ESC}\\`)
+    expect(copyText('ab')).toBe(`${ESC}]52;c;YWI=${ESC}\\`)
+    expect(copyText('abc')).toBe(`${ESC}]52;c;YWJj${ESC}\\`)
+    expect(copyText('')).toBe(`${ESC}]52;c;${ESC}\\`)
+    expect(copyText('€😀')).toBe(`${ESC}]52;c;4oKs8J+YgA==${ESC}\\`)
+    expect(copyText('a\u0007b')).not.toContain('\u0007')
+    const output = fakeOutput({ columns: 100, rows: 30 })
+    const terminal = openTerminal(fakeInput(true), output)
+    terminal.copy('T1 first')
+    terminal.close()
+    terminal.copy('late')
+    expect(output.written).toEqual([ENTER, copyText('T1 first'), LEAVE])
   })
 
   test('a second close does nothing', () => {

@@ -6,7 +6,8 @@ import type { Drawn } from '../hooks/layout'
 import { paint, type Frame } from '../ui/paint'
 import { FIND_CLEAR_KEY, FIND_HOTKEY, FIND_KEY } from '../ui/paint-head'
 import { noteKey } from '../hooks/press-keys'
-import { backHit, findRowOf, hitAt, hitOf, hotkeyHit, noteFieldOf, ringOrder, stepped } from '../ui/ring'
+import { backHit, findRowOf, hitAt, hitOf, hotkeyHit, noteFieldOf, ringOrder, stepped, stopText } from '../ui/ring'
+import { words } from '../ui/run'
 
 const FIND: FindRow = { key: 'find:1', placeholder: 'words', text: '', submitLabel: 'search', submits: 'tasks', clears: false }
 const TITLE: HeadPart = { kind: 'item', item: { kind: 'words', key: 'title', text: 'teamrig', tone: 'bold', cut: false } }
@@ -93,6 +94,28 @@ describe('the stop a key, a cell or a hotkey names', () => {
   test('hotkeyHit: the stop drawn under the key; null for a key no stop takes', () => {
     expect(hotkeyHit(drawn, FIND_HOTKEY)?.key).toBe(FIND_KEY)
     expect(hotkeyHit(drawn, 'z')).toBeNull()
+  })
+})
+
+describe('stopText', () => {
+  test('the words a stop is drawn with, trimmed; a stop of two lines gives both, one under the other', () => {
+    const drawn = frame(head(TITLE, BACK, FOUND), 20)
+    expect(stopText(drawn, 'a')).toBe('T1 first')
+    expect(stopText(drawn, 'b')).toBe('T2 second\nmore')
+  })
+
+  test('counts a wide grapheme as the cells it takes, and keeps no cell past the stop', () => {
+    const base = hitOf(frame(head(TITLE), 20), 'a')
+    if (base === null) throw new Error('no stop a')
+    const wide: Frame = { lines: [[words('界 wide x')]], hits: [{ ...base, key: 'w', line: 0, from: 0, to: 7 }], view: null, places: [] }
+    expect(stopText(wide, 'w')).toBe('界 wide')
+  })
+
+  test('empty for a stop the window leaves out, and for a key no stop has', () => {
+    const short = frame(head(TITLE, BACK, FOUND), 7)
+    expect(hitOf(short, 'd')).toBeNull()
+    expect(stopText(short, 'd')).toBe('')
+    expect(stopText(short, 'nowhere')).toBe('')
   })
 })
 

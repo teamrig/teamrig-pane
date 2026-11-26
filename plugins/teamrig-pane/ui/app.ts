@@ -19,7 +19,7 @@ import { coalesced, type Defer } from './coalesce'
 import type { Key, KeyName } from './keys'
 import { bodyColumns, paint, type Frame } from './paint'
 import { FIND_KEY, type Typing } from './paint-head'
-import { backHit, findRowOf, hitAt, hitOf, hotkeyHit, noteFieldOf, ringOrder, stepped } from './ring'
+import { backHit, findRowOf, hitAt, hitOf, hotkeyHit, noteFieldOf, ringOrder, stepped, stopText } from './ring'
 import type { Stop } from './row'
 import type { Terminal } from './terminal'
 import type { ObservedStore } from './watched-store'
@@ -55,6 +55,8 @@ export type AppDeps = {
 
 /** The key that ends the program when no stop drawn takes it as its hotkey. */
 export const QUIT = 'q'
+/** The key that copies the words of the ring's stop when no stop drawn takes it as its hotkey; `y` as in yank. */
+export const COPY = 'y'
 /** The Find field's second hotkey, the one terminals know a search by. */
 export const FIND_SLASH = '/'
 
@@ -286,7 +288,14 @@ class App {
     const { frame } = drawing
     const hit = hotkeyHit(frame, char) ?? (char === FIND_SLASH ? hitOf(frame, FIND_KEY) : null)
     if (hit === null && char === QUIT) return this.#end(undefined)
+    if (hit === null && char === COPY) return this.#copy(frame)
     return this.#press(hit, drawing)
+  }
+
+  /** Copies the words of the ring's stop as drawn; with the ring on no stop drawn, nothing. */
+  #copy(frame: Frame): void {
+    const text = this.#ring === null ? '' : stopText(frame, this.#ring)
+    if (text !== '') this.#deps.terminal.copy(text)
   }
 
   async #named(name: KeyName, drawing: Drawing): Promise<void> {
