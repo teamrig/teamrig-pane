@@ -256,6 +256,14 @@ hours teamrig keeps its turn log, that is not the one running now; it is read ag
 changes (a `/clear`), from the turn-log files only. With none to name, no turn log or a session with no area, the
 band is the banner alone.
 
+On top of the band, a step teamrig needs its person to take once, such as moving a config to a new format, after an
+update: a dim `step to take` label, the step's title, a dim line of why, then what it changes, a line each, and a dim
+count of the steps after it. Only the first pending step shows, the one to take now. Its `type it in` button types
+the command teamrig serves for the step, teamrig's own `steps run` with `--yes`, into your own prompt box as a draft
+and sends nothing; your Enter, under the lines of what it changes, takes the step. A toast says whether the box took
+it, or what to type in its place. The notice shows in a session with no area too, and never with a teamrig older than interface 1.9, which
+serves no `steps` document.
+
 ## Minimizing, not closing
 
 The close mark (`✕`, or `ctrl+x x`) minimizes the pane to a one-row strip instead of closing it, so a
