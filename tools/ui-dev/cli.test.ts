@@ -17,8 +17,14 @@ const ESC = '\u001b';
 const TAKEN = `${ESC}[?1049h`;
 const GIVEN_BACK = `${ESC}[?1049l`;
 const FRAME = `${ESC}[H`;
-/** Long past a cold emit and start on a loaded host; a run that reaches it is killed and fails on its exit code. */
-const LIMIT_MS = 120_000;
+/**
+ * How long the UI may run once it wrote its first byte: long past a cold start on a loaded host; a run that reaches it
+ * is killed and fails on its exit code. It starts only at that byte, as the tsc emit before it took 113 s on a loaded
+ * host (T5129's first check), and a kill inside the emit says nothing about the UI.
+ */
+const LIMIT_MS = 60_000;
+/** The whole spec, emit included: the emit alone has taken over 2 minutes beside a full check. */
+const SPEC_TIMEOUT_MS = 600_000;
 
 interface Ended {
   readonly code: number | null;
@@ -35,8 +41,9 @@ function ranIn(cwd: string): Promise<Ended> {
     let out = '';
     let err = '';
     let isSent = false;
-    const limit = setTimeout(() => child.kill(), LIMIT_MS);
+    let limit: NodeJS.Timeout | undefined;
     child.stdout.setEncoding('utf8').on('data', (chunk: string) => {
+      limit ??= setTimeout(() => child.kill(), LIMIT_MS);
       out += chunk;
       if (!isSent && out.includes(FRAME)) {
         isSent = true;
@@ -64,7 +71,7 @@ describe('the ui dev tool', () => {
     rmSync(folder, { recursive: true, force: true });
   });
 
-  it('builds this checkout’s UI into .tmp/ui-dev and runs it here: it takes the screen, draws, and on q exits 0', async () => {
+  it('builds this checkout’s UI into .tmp/ui-dev and runs it here: it takes the screen, draws, and on q exits 0', { timeout: SPEC_TIMEOUT_MS }, async () => {
     const ended = await ranIn(folder);
     assert.equal(ended.err, '');
     assert.equal(ended.code, 0);
