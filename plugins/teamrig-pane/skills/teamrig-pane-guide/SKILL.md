@@ -127,6 +127,7 @@ groups (the views, the list's own, a page's steps, the status bar's) and how the
 | A click on the previous conversation's title, over the banner | Opens its tasks' whole titles, when it ran and how it opened under it; again closes them |
 | A click on the previous conversation's `open in pane`, over the banner | Opens the pane at that conversation's page in the Conversations view |
 | A click on `all conversations`, over the banner | Opens the pane at the Conversations list |
+| A click on a step's `type it in`, on top of the band | Types the step's command into the prompt box as a draft; Enter takes the step |
 | `b` | On a page: back to the place before it; on the list, shown only while a page lies ahead; on a conversation's page, back to the list; on a Stats list of tasks, back to the numbers |
 | `f` | Forward to the place back left, while there is one |
 | `s` | In the dock's Tasks, Inbox, Changes and Teams views and on the Conversations list: puts the cursor in the Find field under the switch, which searches what the view holds (see [Find](#find)); emptying it, or `clear`, closes the search; Esc hands the keys back to Claude's prompt |
@@ -154,6 +155,11 @@ came before: a head row with a dim `previous conversation` label, `open in pane`
 its whole title, when it ran with its count of lines, and how it opened; a second click closes them. It is the area's newest conversation in the kept hours of the turn log
 other than the one running now, read again only when the session's conversation changes. With none to name, no
 turn log or a session with no area, the band is the banner alone.
+
+On top of the band, the first one-time step teamrig needs its person to take (teamrig's `steps` document, interface
+1.9): `step to take · <title>`, a dim why, what it changes a line each, and how many steps come after it. Its
+`type it in` button puts the step's command, as teamrig serves it (its `steps run` with `--yes`), in the prompt box
+as a draft, sending nothing; Enter takes the step. A toast says when the box refused it and what to type instead. It shows with no area too.
 
 Minimized, the pane is the `[Tasks] [Changes n] [Conversations] [Inbox (n)] [Teams] [Meetings] [Stats]` switch, then a dim `· minimized, press a view`
 (on a row of its own, with no `·`, in a dock too narrow for both). A
