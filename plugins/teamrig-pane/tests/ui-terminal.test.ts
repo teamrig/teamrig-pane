@@ -85,6 +85,12 @@ describe('the terminal over a process streams', () => {
     expect(output.written).toEqual([ENTER])
   })
 
+  test('has every move of the pointer reported while it holds the screen, and stops that when it gives it back', () => {
+    expect(ENTER).toContain(`${ESC}[?1003h`)
+    expect(LEAVE).toContain(`${ESC}[?1003l`)
+    expect(LEAVE.indexOf(`${ESC}[?1003l`)).toBeLessThan(LEAVE.indexOf(`${ESC}[?1000l`))
+  })
+
   test('draws a frame as its screen text', () => {
     const output = fakeOutput({ columns: 100, rows: 30 })
     const terminal = openTerminal(fakeInput(true), output)

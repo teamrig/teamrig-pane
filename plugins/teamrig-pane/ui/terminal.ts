@@ -44,11 +44,14 @@ export type Output = {
 
 const ESC = '\u001b'
 
-/** Taking the screen: the alternate screen, the cursor hidden, clicks and the wheel reported as SGR 1006. */
-export const ENTER = `${ESC}[?1049h${ESC}[?25l${ESC}[?1000h${ESC}[?1006h`
+/**
+ * Taking the screen: the alternate screen, the cursor hidden, clicks and the wheel reported (1000), every move of the
+ * pointer too (1003, what a hover follows), all as SGR 1006.
+ */
+export const ENTER = `${ESC}[?1049h${ESC}[?25l${ESC}[?1000h${ESC}[?1003h${ESC}[?1006h`
 
 /** Giving it back, each step of ENTER undone in reverse. */
-export const LEAVE = `${ESC}[?1006l${ESC}[?1000l${ESC}[?25h${ESC}[?1049l`
+export const LEAVE = `${ESC}[?1006l${ESC}[?1003l${ESC}[?1000l${ESC}[?25h${ESC}[?1049l`
 
 /** The cells an output that is no terminal is taken to have. */
 export const FALLBACK: Size = { columns: 80, rows: 24 }

@@ -14,7 +14,7 @@ const last: Drawn = { key: 'c', spans: [{ text: 'plain' }], wrap: 'wrap', toggle
 const body = [first, second, last]
 
 function look(columns: number, rows: number, over: Partial<Look> = {}): Look {
-  return { size: { columns, rows }, offset: 0, ring: null, typing: null, ...over }
+  return { size: { columns, rows }, offset: 0, ring: null, hover: null, typing: null, ...over }
 }
 
 function raw(frame: Frame): string[] {
@@ -91,6 +91,12 @@ describe('a frame', () => {
     const frame = paint(head, body, look(20, 10, { ring: 'b' }))
     const inverse = frame.lines.map(line => line.some(run => run.inverse))
     expect(inverse).toEqual([false, false, false, false, true, true, false, false, false, false])
+  })
+
+  test('the hovered stop is underlined on every line of it, no other', () => {
+    const frame = paint(head, body, look(20, 10, { hover: 'b' }))
+    const underlined = frame.lines.map(line => line.some(run => run.underline))
+    expect(underlined).toEqual([false, false, false, false, true, true, false, false, false, false])
   })
 
   test('a line wider than the screen is cut inside the padding', () => {

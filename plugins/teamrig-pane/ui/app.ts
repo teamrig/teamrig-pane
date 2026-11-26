@@ -74,6 +74,8 @@ class App {
   #memo: KeysMemo = FIRST_MEMO
   #settled: Settled | null = null
   #ring: string | null = null
+  /** The key of the stop the pointer was last over, on the drawing then shown. */
+  #hover: string | null = null
   #field: Field | null = null
   #last: Drawing | null = null
   /** True from an ask for a drawing until one starts: a drawing a key was followed by answers the asks before it. */
@@ -97,12 +99,27 @@ class App {
     const { terminal } = this.#deps
     this.#unwatch = this.#store.onChange(() => this.#ask())
     terminal.onKey(key => {
+      // A move comes at every cell the pointer crosses: it asks for a drawing only when the hovered stop changes.
+      if (key.kind === 'move') {
+        this.#queued(async () => this.#moved(key.column, key.line)).catch((error: unknown) => this.#end(error))
+        return
+      }
       this.#queued(async () => {
         await this.#answer(key)
         await this.#draw()
       }).catch((error: unknown) => this.#end(error))
     })
     terminal.onResize(() => this.#ask())
+    this.#ask()
+  }
+
+  /** The pointer is on the cell `column` of line `line`: the stop drawn there is the hover, none off every stop. */
+  #moved(column: number, line: number): void {
+    const drawing = this.#last
+    if (this.#isOver || drawing === null) return
+    const hover = hitAt(drawing.frame, column, line)?.key ?? null
+    if (hover === this.#hover) return
+    this.#hover = hover
     this.#ask()
   }
 
@@ -150,7 +167,7 @@ class App {
     const head = headOf(screen, { inline: false, columns, isHeld: true, keys: look.keys })
     const field = this.#fieldOn(head, screen.body)
     this.#field = field
-    const at = (offset: number): Frame => paint(head, screen.body, { size, offset, ring: this.#ring, typing: field })
+    const at = (offset: number): Frame => paint(head, screen.body, { size, offset, ring: this.#ring, hover: this.#hover, typing: field })
     const first = at(this.#last?.frame.view?.offset ?? 0)
     const frame = first.view === null ? first : this.#landed(first, first.view, screen, at)
     this.#last = { screen, head, frame }
@@ -216,6 +233,9 @@ class App {
         return this.#scroll(drawing.frame, view => view.offset + key.by * WHEEL_ROWS)
       case 'key':
         return this.#named(key.name, drawing)
+      case 'move':
+        // Answered apart, with no drawing of its own (start).
+        return
     }
   }
 

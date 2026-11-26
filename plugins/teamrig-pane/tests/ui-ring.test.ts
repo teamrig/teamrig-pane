@@ -22,7 +22,7 @@ const last: Drawn = { key: 'd', spans: [{ text: 'T4 last' }], wrap: 'wrap', togg
 const body = [first, second, plain, last]
 
 function frame(of: Head, rows: number, offset = 0): Frame {
-  return paint(of, body, { size: { columns: 30, rows }, offset, ring: null, typing: null })
+  return paint(of, body, { size: { columns: 30, rows }, offset, ring: null, hover: null, typing: null })
 }
 
 describe('ringOrder', () => {
