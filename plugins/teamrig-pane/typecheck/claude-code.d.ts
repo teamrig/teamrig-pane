@@ -209,8 +209,23 @@ declare module 'claude-code' {
       resolve(request: RenderRequest): Components
       scroll(args: UiScrollArgs): Promise<UiScrollResult>
       focus(args: UiFocusArgs): Promise<UiFocusResult>
+      /** A line floated over the transcript for `timeoutMs` (default 4000). */
+      toast(text: string, options?: { readonly timeoutMs?: number }): void
     }
+    readonly prompt: { fill(args: PromptFillArgs): Promise<PromptFilled> }
   }
+
+  /**
+   * What `$.prompt.fill` puts in the person's prompt box: a draft they read and send themselves, never a submitted
+   * prompt; `replace` over the draft.
+   */
+  export type PromptFillArgs = { readonly text: string; readonly mode: 'replace' }
+  /**
+   * Whether the box took the text; when the engine refused it, why: `no_composer` where the session binds no box,
+   * `dialog` while one holds the keys, `unanswered` where no app answered, so the text may have landed. A hook's
+   * refusal carries none.
+   */
+  export type PromptFilled = { readonly isFilled: boolean; readonly refusal?: 'no_composer' | 'dialog' | 'unanswered' }
 
   /** Where the fullscreen layout would draw a command's pane: the dock needs the fullscreen layout and enough columns. */
   export type CommandPresentation = { readonly isFullscreen: boolean; readonly columns: number }
