@@ -8,11 +8,12 @@ import { copyText, ENTER, FALLBACK, LEAVE, openTerminal, screenText, type Input,
 
 const ESC = '\u001b'
 
-type FakeInput = Input & { readonly calls: string[]; send(chunk: string): void }
+type FakeInput = Input & { readonly calls: string[]; send(chunk: string): void; end(): void }
 
 function fakeInput(isTerminal: boolean): FakeInput {
   const calls: string[] = []
   let listeners: ((chunk: string) => void)[] = []
+  let endListeners: (() => void)[] = []
   const streams = {
     calls,
     setEncoding(encoding: 'utf8') {
@@ -30,8 +31,16 @@ function fakeInput(isTerminal: boolean): FakeInput {
     off(_event: 'data', listener: (chunk: string) => void) {
       listeners = listeners.filter(each => each !== listener)
     },
+    once(_event: 'end', listener: () => void) {
+      endListeners = [...endListeners, listener]
+    },
     send(chunk: string) {
       for (const listener of listeners) listener(chunk)
+    },
+    end() {
+      const told = endListeners
+      endListeners = []
+      for (const listener of told) listener()
     },
   }
   if (!isTerminal) return streams
@@ -160,6 +169,27 @@ describe('the terminal over a process streams', () => {
     terminal.close()
     terminal.copy('late')
     expect(output.written).toEqual([ENTER, copyText('T1 first'), LEAVE])
+  })
+
+  test('tells every listener once that the input ended, while it is open', () => {
+    const input = fakeInput(false)
+    const terminal = openTerminal(input, fakeOutput(null))
+    const told: string[] = []
+    terminal.onEnd(() => told.push('first'))
+    terminal.onEnd(() => told.push('second'))
+    input.end()
+    input.end()
+    expect(told).toEqual(['first', 'second'])
+  })
+
+  test('says nothing of an input that ends after close', () => {
+    const input = fakeInput(false)
+    const terminal = openTerminal(input, fakeOutput(null))
+    const told: string[] = []
+    terminal.onEnd(() => told.push('ended'))
+    terminal.close()
+    input.end()
+    expect(told).toEqual([])
   })
 
   test('a second close does nothing', () => {

@@ -18,6 +18,11 @@ export interface Terminal {
   /** Tells `listener` of the screen's cells each time they change. */
   onResize(listener: (size: Size) => void): void
   /**
+   * Tells `listener` once that the input ended, so no key can come again: an input that is a pipe nobody writes to
+   * (an AI CLI's shell tool) ends at once. Never told once the terminal is closed.
+   */
+  onEnd(listener: () => void): void
+  /**
    * Hands `text` to the clipboard of the terminal's host (OSC 52): while the program holds the mouse, the
    * terminal's own selection takes Shift held, so this is the copy a key asks for.
    */
@@ -35,6 +40,8 @@ export type Input = {
   pause(): unknown
   on(event: 'data', listener: (chunk: string) => void): unknown
   off(event: 'data', listener: (chunk: string) => void): unknown
+  /** `end` is told once the input has nothing more to read. */
+  once(event: 'end', listener: () => void): unknown
 }
 
 /** What the terminal writes to: a process's stdout is one. */
@@ -112,6 +119,7 @@ export function screenText(lines: readonly (readonly Run[])[]): string {
 export function openTerminal(input: Input, output: Output): Terminal {
   const keyListeners: ((key: Key) => void)[] = []
   const sizeListeners: ((size: Size) => void)[] = []
+  const endListeners: (() => void)[] = []
   let isOpen = true
   const size = (): Size => ({ columns: output.columns ?? FALLBACK.columns, rows: output.rows ?? FALLBACK.rows })
   const onData = (chunk: string): void => {
@@ -124,6 +132,9 @@ export function openTerminal(input: Input, output: Output): Terminal {
   input.setRawMode?.(true)
   input.setEncoding('utf8')
   input.on('data', onData)
+  input.once('end', () => {
+    if (isOpen) for (const listener of endListeners) listener()
+  })
   input.resume()
   output.on('resize', onResized)
   output.write(ENTER)
@@ -137,6 +148,9 @@ export function openTerminal(input: Input, output: Output): Terminal {
     },
     onResize(listener) {
       sizeListeners.push(listener)
+    },
+    onEnd(listener) {
+      endListeners.push(listener)
     },
     copy(text) {
       if (isOpen) output.write(copyText(text))

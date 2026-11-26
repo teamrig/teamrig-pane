@@ -1,8 +1,9 @@
 // The dedicated UI as a program: it takes a process's streams as the terminal, runs the loop on it (app.ts) and
 // answers the exit code. The process itself stays outside (main.ts hands its streams in), so all of this runs in a
-// spec on fake streams. However it ends, the person's quit, a throw or a signal, the terminal is given back first:
-// a program that leaves the alternate screen or the mouse reporting on has broken the person's shell. Its holder is
-// told of the end next (`ending`), to stop what the program left running.
+// spec on fake streams. However it ends, the person's quit, a throw, a signal or an input that ended (no key can come
+// again, so it would run on unseen: one started in an AI CLI's shell tool did, for days), the terminal is given back
+// first: a program that leaves the alternate screen or the mouse reporting on has broken the person's shell. Its
+// holder is told of the end next (`ending`), to stop what the program left running.
 import type { Snapshot } from '../types'
 import type { KeysWords } from '../hooks/find-field'
 import { WrapCache } from '../hooks/layout'
@@ -26,6 +27,8 @@ export const QUIT_CODE = 0
 export const FAILED_CODE = 1
 /** The exit code a shell expects of a program a signal ended: 128 and the signal's number. */
 export const SIGNAL_CODES: Readonly<Record<Signal, number>> = { SIGHUP: 129, SIGTERM: 143 }
+/** Why a program whose input ended stops, said once the screen is given back. */
+export const INPUT_ENDED = 'its input ended, so no key can reach it: run it in a terminal (teamrig ui opens one)'
 
 export type ProgramDeps = {
   readonly input: Input
@@ -102,6 +105,7 @@ export function runProgram(deps: ProgramDeps): Promise<number> {
       resolve(unstopped === null ? code : FAILED_CODE)
     }
     for (const { signal, stop } of stops) deps.signals.on(signal, stop)
+    terminal.onEnd(() => over(FAILED_CODE, INPUT_ENDED))
     // A zero timer, not `setImmediate`: the plugin specs also run under the engine's runner, which has no such global.
     const defer = (step: () => void): void => {
       setTimeout(step, 0)

@@ -8,7 +8,7 @@ import { INITIAL_STATE } from '../hooks/pane-state'
 import { MemoryStore } from '../hooks/pane-store'
 import type { AppDeps } from '../ui/app'
 import { keysHint } from '../hooks/find-field'
-import { FAILED_CODE, NO_TEAM_FRONT, OWN_KEYS, ownLook, QUIT_CODE, runProgram, SIGNAL_CODES, type Signal } from '../ui/program'
+import { FAILED_CODE, INPUT_ENDED, NO_TEAM_FRONT, OWN_KEYS, ownLook, QUIT_CODE, runProgram, SIGNAL_CODES, type Signal } from '../ui/program'
 import { ENTER, LEAVE, type Input, type Output } from '../ui/terminal'
 import { WatchedStore } from '../ui/watched-store'
 import { HOUR, NOW, createLine } from './fixtures'
@@ -23,6 +23,8 @@ type Rig = {
   readonly store: WatchedStore
   readonly code: Promise<number>
   send(chunk: string): void
+  /** The input reaches its end: no key can come again. */
+  end(): void
   signal(signal: Signal): void
   /** The signals still listened for. */
   heard(): Signal[]
@@ -48,6 +50,7 @@ function rig(options: RigOptions = {}): Rig {
   const log: string[] = []
   const store = new WatchedStore(new MemoryStore(INITIAL_STATE))
   let onData: ((chunk: string) => void)[] = []
+  let onEnd: (() => void)[] = []
   let onSignal: { readonly signal: Signal; readonly listener: () => void }[] = []
   const input: Input = {
     setRawMode: () => {
@@ -63,6 +66,9 @@ function rig(options: RigOptions = {}): Rig {
     },
     off: (_event, listener) => {
       onData = onData.filter(each => each !== listener)
+    },
+    once: (_event, listener) => {
+      onEnd = [...onEnd, listener]
     },
   }
   const output: Output = {
@@ -106,6 +112,11 @@ function rig(options: RigOptions = {}): Rig {
     code,
     send: chunk => {
       for (const listener of onData) listener(chunk)
+    },
+    end: () => {
+      const told = onEnd
+      onEnd = []
+      for (const listener of told) listener()
     },
     signal: signal => {
       for (const each of onSignal) if (each.signal === signal) each.listener()
@@ -187,6 +198,23 @@ describe('the program on a terminal', () => {
       expect(program.heard()).toEqual([])
     }
     expect(SIGNAL_CODES).toEqual({ SIGHUP: 129, SIGTERM: 143 })
+  })
+
+  test('an input that ended exits 1 and says why, once the screen is given back and the holder told', async () => {
+    const program = await started()
+    program.end()
+    expect(await ending(program)).toBe(FAILED_CODE)
+    expect(outside(program)).toEqual(['enter', 'leave', 'pause', 'ending', `complain teamrig ui: ${INPUT_ENDED}\n`])
+    expect(program.heard()).toEqual([])
+  })
+
+  test('an input that ends after a quit changes nothing: the quit code stands', async () => {
+    const program = await started()
+    program.send('q')
+    expect(await ending(program)).toBe(QUIT_CODE)
+    program.end()
+    expect(await ending(program)).toBe(QUIT_CODE)
+    expect(outside(program)).toEqual(['enter', 'leave', 'pause', 'ending'])
   })
 
   test('a drawing that throws exits 1, and says why only once the screen is given back', async () => {
