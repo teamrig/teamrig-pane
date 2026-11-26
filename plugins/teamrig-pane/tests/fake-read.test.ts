@@ -243,7 +243,7 @@ describe('the fake teamrig read', () => {
   test('refuses a run that asks no document, or one it does not serve', async () => {
     const { disk } = teamDisk()
     const teamrig = fakeRead(disk, () => NOW)
-    const refusal = { exitCode: 2, stdout: '', stderr: 'REFUSED read serves tasks, inbox, sessions, config, plan', isStdoutTruncated: false }
+    const refusal = { exitCode: 2, stdout: '', stderr: 'REFUSED read serves tasks, inbox, sessions, config, plan, steps', isStdoutTruncated: false }
     expect(await teamrig(words('tasks goals'))).toEqual(refusal)
     expect(await teamrig(['read', '--json'])).toEqual(refusal)
   })

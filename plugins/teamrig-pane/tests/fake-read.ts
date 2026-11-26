@@ -172,7 +172,7 @@ function inboxSession(team: Team, asker: string | null): string {
 /** The documents this fake folds from a register's files: every one the pane polls; a stats spec prints its own document. */
 type ServedName = Exclude<DocumentName, 'stats'>
 
-const SERVED_NAMES: readonly ServedName[] = ['tasks', 'inbox', 'sessions', 'config', 'plan']
+const SERVED_NAMES: readonly ServedName[] = ['tasks', 'inbox', 'sessions', 'config', 'plan', 'steps']
 
 function isServedName(value: string): value is ServedName {
   return SERVED_NAMES.some(name => name === value)
@@ -207,6 +207,8 @@ async function teamBody(name: ServedName, disk: FakeDisk, team: Team, asked: Ask
     }
     case 'config':
       return { team: team.files.team, teams: [], timeZone: team.settings.timeZone, settings: settingRows(servedSettings(team.settings)) }
+    case 'steps':
+      return { steps: [] }
   }
 }
 
