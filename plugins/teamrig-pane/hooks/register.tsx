@@ -83,7 +83,7 @@ import { TreeGoals } from './tree-goals'
 import { WrapCache, dockLayout, type CardPart, type Drawn } from './layout'
 import { diffKey, noteKey, pieceKey, placeOf, pressesFrom, standInsOf } from './press-keys'
 import { buttonCells } from './pack'
-import { fillArgs, filledLine, STEP_FILL_KEY, STEP_FILL_LABEL, stepShown, stepsBlock, STEPS_KEY } from './steps-notice'
+import { pressFill, STEP_FILL_KEY, STEP_FILL_LABEL, stepShown, stepsBlock, STEPS_KEY } from './steps-notice'
 import { barSpans, blankSpans, frameOf, placesOf, revealed, scrolledBy, viewOf, type FrameSlot, type Placed, type View } from './frame'
 import { scrolledTo, settle, type Settled } from './body-scroll'
 import {
@@ -442,7 +442,7 @@ function drawSteps($: Context, { Box, Button, Text, Link }: Components, snap: Sn
   const fillCells = buttonCells({ label: STEP_FILL_LABEL, plain: false, hotkey: null }) + 1
   const [notice] = dockLayout([stepsBlock(step, snap.steps.length)], columns - fillCells, wraps)
   if (notice === undefined) return null
-  const fill = async () => $.ui.toast(filledLine(step, await $.prompt.fill(fillArgs(step))))
+  const fill = () => pressFill(step, args => $.prompt.fill(args), line => $.ui.toast(line))
   return (
     <Box key={STEPS_KEY} flexDirection="row" columnGap={1}>
       <Box flexGrow={1}>{drawSpans({ Text, Link }, notice.spans, notice.wrap)}</Box>

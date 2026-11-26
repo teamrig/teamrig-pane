@@ -68,3 +68,24 @@ export function filledLine(step: PendingStep, filled: StepFilled): string {
   // A hook's refusal names no reason.
   return `a plugin kept the step out of your prompt: type ${step.command} yourself`
 }
+
+/** The toast line when the fill itself failed, the prompt box not answering at all. */
+export function fillFailedLine(step: PendingStep): string {
+  return `the prompt box could not take the step: type ${step.command} yourself`
+}
+
+/**
+ * A press of the button: asks `fill` for `step`'s command and toasts how it went. It never rejects, since the button
+ * drops its promise: a fill that fails is told in a toast like a refusal, never left as an unhandled rejection.
+ */
+export async function pressFill(
+  step: PendingStep,
+  fill: (args: StepFill) => Promise<StepFilled>,
+  toast: (line: string) => void,
+): Promise<void> {
+  const line = await fill(fillArgs(step)).then(
+    filled => filledLine(step, filled),
+    () => fillFailedLine(step),
+  )
+  toast(line)
+}

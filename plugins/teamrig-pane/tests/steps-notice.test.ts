@@ -2,7 +2,7 @@
 // it, and what a press on its button types into the prompt box and says, filled or refused (T5015).
 import { describe, expect, test } from 'claude-code/testing'
 import type { PendingStep } from '../hooks/steps-document'
-import { fillArgs, filledLine, stepShown, stepsBlock, STEPS_KEY, type StepFilled } from '../hooks/steps-notice'
+import { fillArgs, filledLine, pressFill, stepShown, stepsBlock, STEPS_KEY, type StepFill, type StepFilled } from '../hooks/steps-notice'
 
 function step(id: string, over: Partial<PendingStep> = {}): PendingStep {
   return { id, title: `Title of ${id}`, why: `Why ${id} is needed`, preview: [`${id} changes this`], command: `/teamrig steps run ${id} --yes`, ...over }
@@ -59,5 +59,24 @@ describe('filledLine', () => {
       'the prompt box did not answer: check whether it holds /teamrig steps run a --yes',
       'a plugin kept the step out of your prompt: type /teamrig steps run a --yes yourself',
     ])
+  })
+})
+
+describe('pressFill', () => {
+  test("fills the step's command over the draft and toasts how the fill went", async () => {
+    const asked: StepFill[] = []
+    const toasts: string[] = []
+    await pressFill(step('a'), args => {
+      asked.push(args)
+      return Promise.resolve({ isFilled: true })
+    }, line => toasts.push(line))
+    expect(asked).toEqual([{ text: '/teamrig steps run a --yes', mode: 'replace' }])
+    expect(toasts).toEqual(['/teamrig steps run a --yes is in your prompt: press Enter to take the step'])
+  })
+
+  test('a fill that rejects resolves the press and toasts the command to type by hand', async () => {
+    const toasts: string[] = []
+    await pressFill(step('a'), () => Promise.reject(new Error('the prompt box went away')), line => toasts.push(line))
+    expect(toasts).toEqual(['the prompt box could not take the step: type /teamrig steps run a --yes yourself'])
   })
 })
