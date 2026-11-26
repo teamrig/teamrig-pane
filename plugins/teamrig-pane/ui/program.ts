@@ -142,6 +142,8 @@ export const OWN_KEYS: KeysWords = {
   away: '',
   page: [
     { name: 'leave', keys: 'Esc', words: ': out of a field, else back' },
+    { name: 'copy', keys: 'y', words: ": copy the ring's words" },
+    { name: 'select', keys: 'Shift+drag', words: ': select text as the terminal does' },
     { name: 'quit', keys: 'q', words: ', or ctrl+c: quit' },
   ],
 }

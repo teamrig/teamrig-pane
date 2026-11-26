@@ -17,6 +17,11 @@ export interface Terminal {
   onKey(listener: (key: Key) => void): void
   /** Tells `listener` of the screen's cells each time they change. */
   onResize(listener: (size: Size) => void): void
+  /**
+   * Hands `text` to the clipboard of the terminal's host (OSC 52): while the program holds the mouse, the
+   * terminal's own selection takes Shift held, so this is the copy a key asks for.
+   */
+  copy(text: string): void
   /** Gives the screen and the input back as they were; a second call does nothing. */
   close(): void
 }
@@ -61,6 +66,41 @@ const CLEAR_LINE = `${ESC}[K`
 const CLEAR_BELOW = `${ESC}[J`
 
 /**
+ * `text` set on the clipboard as a terminal reads it (OSC 52, `c` the clipboard), in base64 so no byte of it is ever
+ * read as a control code.
+ */
+export function copyText(text: string): string {
+  return `${ESC}]52;c;${base64(utf8(text))}${ESC}\\`
+}
+
+/** `text`'s UTF-8 bytes, by hand: the engine the UI runs on has neither Buffer nor a sure TextEncoder. */
+function utf8(text: string): number[] {
+  const bytes: number[] = []
+  for (const char of text) {
+    const point = char.codePointAt(0) ?? 0
+    if (point < 0x80) bytes.push(point)
+    else if (point < 0x800) bytes.push(0xc0 | (point >> 6), 0x80 | (point & 63))
+    else if (point < 0x10000) bytes.push(0xe0 | (point >> 12), 0x80 | ((point >> 6) & 63), 0x80 | (point & 63))
+    else bytes.push(0xf0 | (point >> 18), 0x80 | ((point >> 12) & 63), 0x80 | ((point >> 6) & 63), 0x80 | (point & 63))
+  }
+  return bytes
+}
+
+const BASE64_DIGITS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/'
+
+/** `bytes` in base64 with its `=` padding. */
+function base64(bytes: readonly number[]): string {
+  let out = ''
+  for (let at = 0; at < bytes.length; at += 3) {
+    const word = ((bytes[at] ?? 0) << 16) | ((bytes[at + 1] ?? 0) << 8) | (bytes[at + 2] ?? 0)
+    out += BASE64_DIGITS.charAt((word >> 18) & 63) + BASE64_DIGITS.charAt((word >> 12) & 63)
+    out += at + 1 < bytes.length ? BASE64_DIGITS.charAt((word >> 6) & 63) : '='
+    out += at + 2 < bytes.length ? BASE64_DIGITS.charAt(word & 63) : '='
+  }
+  return out
+}
+
+/**
  * A frame as a terminal reads it. No line break follows the last line: a frame has as many lines as the screen has
  * rows, and a break after the last would scroll the first one off.
  */
@@ -97,6 +137,9 @@ export function openTerminal(input: Input, output: Output): Terminal {
     },
     onResize(listener) {
       sizeListeners.push(listener)
+    },
+    copy(text) {
+      if (isOpen) output.write(copyText(text))
     },
     close() {
       if (!isOpen) return

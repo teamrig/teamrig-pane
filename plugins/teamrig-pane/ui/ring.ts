@@ -1,10 +1,11 @@
 // The focus ring over a frame, read from what the painter drew: the order Tab walks, the stop a key, a cell or a
-// hotkey names, the way back Esc takes, and the Find row the head holds. Pure: the app keeps only the ring's key.
+// hotkey names, the words a stop is drawn with, the way back Esc takes, and the Find row the head holds. Pure: the app keeps only the ring's key.
 import type { FindRow, Head, HeadPiece } from '../hooks/head'
 import type { Drawn } from '../hooks/layout'
 import type { Press } from '../hooks/press'
 import { noteKey, pressesOf } from '../hooks/press-keys'
 import type { NoteField } from '../hooks/rows'
+import { cells, graphemes } from '../hooks/width'
 import type { Frame, Hit } from './paint'
 
 /** The Note field keyed `key` on a card the body draws, in the window or out of it; null when `key` names none. */
@@ -43,6 +44,26 @@ export function hitOf(frame: Frame, key: string | null): Hit | null {
 /** The stop drawn on the cell `column` of the line `line`. */
 export function hitAt(frame: Frame, column: number, line: number): Hit | null {
   return frame.hits.find(hit => hit.line === line && column >= hit.from && column < hit.to) ?? null
+}
+
+/**
+ * The words the frame draws for the stop keyed `key`, each of its lines' cells trimmed, the lines joined by line
+ * breaks: what a copy of the ring's stop takes. Empty when the window leaves the stop out.
+ */
+export function stopText(frame: Frame, key: string): string {
+  return frame.hits
+    .filter(hit => hit.key === key)
+    .map(hit => {
+      let at = 0
+      let kept = ''
+      for (const grapheme of graphemes((frame.lines[hit.line] ?? []).map(run => run.text).join(''))) {
+        if (at >= hit.from && at < hit.to) kept += grapheme
+        at += cells(grapheme)
+      }
+      return kept.trim()
+    })
+    .filter(text => text !== '')
+    .join('\n')
 }
 
 /** The stop the frame draws under the hotkey `char`. */
