@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.85.0](https://github.com/teamrig/teamrig-pane/compare/teamrig-pane-v0.84.0...teamrig-pane-v0.85.0) (2026-11-26)
+
+
+### Features
+
+* **steps:** read the steps teamrig needs its person to take, from interface 1.9 (T5015) ([dd5ddec](https://github.com/teamrig/teamrig-pane/commit/dd5ddec60c3c2b20732219618c8a1d7145d03d9d))
+* **steps:** the band above the prompt offers the first step, a press types its command as a draft (T5015) ([e20ef8d](https://github.com/teamrig/teamrig-pane/commit/e20ef8d852a92a7214d8915effc5f47ca82a44cf))
+* **steps:** the notice's rows and the line a fill of its command ends in (T5015) ([ba7b4ba](https://github.com/teamrig/teamrig-pane/commit/ba7b4ba39ff5f2cffb1cdce7caaead549e92afd9))
+* **steps:** the snapshot holds the pending steps, read with the register's documents (T5015) ([45d50d3](https://github.com/teamrig/teamrig-pane/commit/45d50d3e0cc91a72acd006ba84faae716f49ddaa))
+
+
+### Bug Fixes
+
+* **pane:** the tab's session is unknown, not untied, when the read failed (T5464) ([bdd46c9](https://github.com/teamrig/teamrig-pane/commit/bdd46c902ae79c3851ba0898181118d466988f3e))
+* **steps:** a press whose prompt fill fails toasts the command to type, never throws (T5649) ([09828db](https://github.com/teamrig/teamrig-pane/commit/09828dbcf7639ea956410626561c54d3eda92a83))
+
 ## [0.84.0](https://github.com/teamrig/teamrig-pane/compare/teamrig-pane-v0.83.1...teamrig-pane-v0.84.0) (2026-11-24)
 
 
