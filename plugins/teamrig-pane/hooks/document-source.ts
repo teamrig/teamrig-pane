@@ -1,7 +1,8 @@
 // The snapshot the views draw, with what `teamrig read` serves laid over what the pane still folds from the team's
 // files (T4742): the task rows, the area with its name and inbox, who leads whom and the drawn settings come from
 // the `tasks`, `inbox`, `sessions` and `config` documents, and whose cards wait on the owner from the `plan` document
-// (T4759); the files keep feeding what no document serves yet, ids and numbers only (the work marks, goals' ranks,
+// (T4759), and the one-time steps teamrig needs its person to take from the `steps` document, asked only of a teamrig
+// that serves it (interface 1.9, T5015); the files keep feeding what no document serves yet, ids and numbers only (the work marks, goals' ranks,
 // spend, task counts, and the other teams' tasks the own ones are judged by, of which only the id, status and
 // numbers are read). A title is drawn from
 // a document's row or not at all: an owner card whose task the rows lack is left out, and until the first tasks
@@ -19,6 +20,7 @@ import { readDocuments, type ReadAsker, type ReadPorts } from './read-port'
 import { nameOf, leadsOf } from './session-roster'
 import { sessionsOf, type SessionsRead } from './sessions-document'
 import { shownText } from './shown-text'
+import { stepsOf } from './steps-document'
 import { joinedProblems, type FilePoll, type PollInput } from './source'
 import { tasksOf } from './tasks-document'
 import type { TeamrigCli } from './teamrig-cli'
@@ -46,9 +48,12 @@ type PolledName = Exclude<DocumentName, 'stats'>
 /** The documents every read asks for; `inbox` joins them once the area is known to be on the team. */
 const ALWAYS: readonly PolledName[] = ['tasks', 'sessions', 'config']
 
-/** What one run asks for: the documents of every read, the inbox when a session is named, the plan last. */
-function namesAsked(session: string | null, withPlan: boolean): PolledName[] {
-  return [...ALWAYS, ...(session === null ? [] : ['inbox' as const]), ...(withPlan ? ['plan' as const] : [])]
+/** The interface minor that first serves the `steps` document: an older teamrig refuses a whole run that names it. */
+export const STEPS_MINOR = 9
+
+/** What one run asks for: the documents of every read, the inbox when a session is named, then the plan and the steps. */
+function namesAsked(session: string | null, withPlan: boolean, withSteps: boolean): PolledName[] {
+  return [...ALWAYS, ...(session === null ? [] : ['inbox' as const]), ...(withPlan ? ['plan' as const] : []), ...(withSteps ? ['steps' as const] : [])]
 }
 
 /** Where the pane's conversation stands on `team`, as the held sessions document says. */
@@ -91,7 +96,13 @@ export class DocumentSource implements SnapshotSource {
   private readonly sessions = new Held(sessionsOf)
   private readonly config = new Held(configOf)
   private readonly plan = new Held(planOf)
+  private readonly steps = new Held(stepsOf)
   private readonly held: Readonly<Record<PolledName, { take(document: ReadDocument): void }>>
+  /**
+   * The newest interface minor the last run that answered printed; -1 before one did. The steps document is asked
+   * only from STEPS_MINOR on, since naming it to an older teamrig would refuse the whole run.
+   */
+  private servedMinor = -1
   /** The file source's last snapshot: a poll of it answers null while nothing it reads moved. */
   private base: FoldSnapshot | null = null
   /** When the documents were last asked for; null before the first read. */
@@ -105,7 +116,12 @@ export class DocumentSource implements SnapshotSource {
     this.files = files
     this.cli = cli
     this.ports = ports
-    this.held = { tasks: this.tasks, inbox: this.inbox, sessions: this.sessions, config: this.config, plan: this.plan }
+    this.held = { tasks: this.tasks, inbox: this.inbox, sessions: this.sessions, config: this.config, plan: this.plan, steps: this.steps }
+  }
+
+  /** Whether the teamrig that last answered serves the steps document. */
+  private get servesSteps(): boolean {
+    return this.servedMinor >= STEPS_MINOR
   }
 
   /** The sessions document last read, for a caller that looks a session up by a typed word; null before one is. */
@@ -139,6 +155,8 @@ export class DocumentSource implements SnapshotSource {
         return this.plan.revision
       case 'inbox':
         return this.inbox.revision
+      case 'steps':
+        return this.steps.revision
       default:
         return null
     }
@@ -174,21 +192,32 @@ export class DocumentSource implements SnapshotSource {
    * 1.1 refuses a whole run that names it, so a failed run is first tried again without the plan, and only then
    * without the session: the other documents are still drawn, under the reason the first run gave, and the plan last
    * held is kept as any document of a failed run is.
+   *
+   * The steps ride it too once a run's documents said the teamrig serves them (interface STEPS_MINOR); the retries
+   * drop them with the plan. A read that first learns the teamrig serves them, or is answered only by a retry, asks
+   * for them in the second run, with the inbox when that is due too.
    */
   private async read(team: string | null, input: PollInput): Promise<void> {
     this.readAt = input.now
     const problems: string[] = []
     const known = this.placeOf(team, input.pinned)
     let asked = known.areaName === null ? null : known.area
-    let isRead = await this.run(namesAsked(asked, true), asked, input, problems)
-    if (!isRead) isRead = await this.run(namesAsked(asked, false), asked, input, problems)
+    const withSteps = this.servesSteps
+    let isStepsAsked = withSteps
+    let isRead = await this.run(namesAsked(asked, true, withSteps), asked, input, problems)
+    if (!isRead) {
+      isStepsAsked = false
+      isRead = await this.run(namesAsked(asked, false, false), asked, input, problems)
+    }
     if (!isRead && asked !== null) {
       asked = null
-      isRead = await this.run(namesAsked(null, false), null, input, problems)
+      isRead = await this.run(namesAsked(null, false, false), null, input, problems)
     }
     if (isRead) {
       const now = this.placeOf(team, input.pinned)
-      if (now.area !== null && now.areaName !== null && now.area !== asked) await this.run(['inbox'], now.area, input, problems)
+      const isInboxDue = now.area !== null && now.areaName !== null && now.area !== asked
+      const second: PolledName[] = [...(isInboxDue ? ['inbox' as const] : []), ...(!isStepsAsked && this.servesSteps ? ['steps' as const] : [])]
+      if (second.length > 0) await this.run(second, isInboxDue ? now.area : asked, input, problems)
     }
     this.runProblems = [...new Set(problems)]
   }
@@ -204,7 +233,12 @@ export class DocumentSource implements SnapshotSource {
     }
     this.lastAsker = asker
     problems.push(...result.problems)
-    for (const [name, document] of result.documents) this.held[name].take(document)
+    let minor = -1
+    for (const [name, document] of result.documents) {
+      this.held[name].take(document)
+      minor = Math.max(minor, document.interface.minor)
+    }
+    if (minor >= 0) this.servedMinor = minor
     return true
   }
 
@@ -217,6 +251,7 @@ export class DocumentSource implements SnapshotSource {
     if (name === 'tasks') return this.tasks.revision
     if (name === 'sessions') return this.sessions.revision
     if (name === 'config') return this.config.revision
+    if (name === 'steps') return this.steps.revision
     if (name === 'plan') {
       const validUntil = this.plan.value?.validUntil ?? null
       return validUntil !== null && now >= validUntil ? null : this.plan.revision
@@ -281,6 +316,8 @@ export class DocumentSource implements SnapshotSource {
       unreadInbox: inbox?.unread ?? null,
       inbox: inbox === null ? [] : inboxShown(inbox.items, now),
       ownerCards: titledCards(this.plan.value?.ownerCards ?? null, rows, zoneNamed(settings?.timeZone ?? base.timeZone)),
+      // A teamrig moved back past STEPS_MINOR serves no steps, so the ones held from the newer one are not drawn.
+      steps: this.servesSteps ? (this.steps.value ?? []) : [],
       problem: joinedProblems([
         base.problem,
         ...this.runProblems,
@@ -288,6 +325,7 @@ export class DocumentSource implements SnapshotSource {
         ...this.sessions.lines,
         ...this.config.lines,
         ...this.plan.lines,
+        ...(this.servesSteps ? this.steps.lines : []),
         ...this.inboxLines(place, inbox),
         this.otherTeam(base.team),
       ]),

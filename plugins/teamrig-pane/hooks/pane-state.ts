@@ -55,6 +55,7 @@ export const EMPTY_SNAPSHOT: Snapshot = {
   ownerCards: {},
   taskCounts: NO_TASK_COUNTS,
   plan: null,
+  steps: [],
   now: 0,
 }
 

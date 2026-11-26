@@ -14,12 +14,30 @@ import { tasksOf } from '../hooks/tasks-document'
 import type { CliRun, TeamrigCli } from '../hooks/teamrig-cli'
 import type { Snapshot, TaskRow } from '../types'
 import { HOUR, NO_TEAM, NOW, SNAPSHOT_SETTINGS } from './fixtures'
-import { AN_HOUR_AGO, askedOf, configDocument, inboxDocument, planDocument, planned, printed, refused, session, sessionsDocument, task, tasksDocument, type Asked } from './served-documents'
+import {
+  AN_HOUR_AGO,
+  askedOf,
+  configDocument,
+  inboxDocument,
+  planDocument,
+  planned,
+  printed,
+  refused,
+  servedStep,
+  session,
+  sessionsDocument,
+  stepsDocument,
+  task,
+  tasksDocument,
+  type Asked,
+} from './served-documents'
 
 const CLI: TeamrigCli = { kind: 'found', main: 'K/teamrig/dist/cli/main.js' }
 const DAY = 24 * HOUR
 /** What a teamrig of interface 1.0 answers a run that names the plan. */
 const UNKNOWN_PLAN = 'unknown document "plan"; the documents are tasks, inbox, sessions, config'
+/** What a teamrig older than interface 1.9 answers a run that names the steps. */
+const UNKNOWN_STEPS = 'unknown document "steps"; the documents are tasks, inbox, sessions, config, plan, stats'
 
 /**
  * A teamrig answering `read` by the words asked: each document as it stands, `unchanged` for one asked with the
@@ -32,6 +50,8 @@ class FakeTeamrig {
   inboxes: Record<string, JsonRecord> = { api: inboxDocument('i1', 'api'), lead: inboxDocument('i7', 'lead') }
   /** The plan as interface 1.1 serves it; null: a teamrig of interface 1.0, which refuses a run that names it. */
   plan: JsonRecord | null = planDocument('p1', [planned('T1')])
+  /** The steps as interface 1.9 serves them; null: an older teamrig, which refuses a run that names them. */
+  steps: JsonRecord | null = null
   /** Answers every run in place of the documents, an Error by rejecting; null: the documents. */
   broken: CliRun | Error | null = null
   readonly asked: Asked[] = []
@@ -58,10 +78,13 @@ class FakeTeamrig {
     const documents: JsonRecord[] = []
     for (const name of asked.documents) {
       if (name === 'plan' && this.plan === null) return refused(UNKNOWN_PLAN)
-      const document = name === 'plan' ? this.plan : this.documentOf(name, asked.session)
+      if (name === 'steps' && this.steps === null) return refused(UNKNOWN_STEPS)
+      const document = name === 'plan' ? this.plan : name === 'steps' ? this.steps : this.documentOf(name, asked.session)
       if (document === null) return refused(`session ${asked.session ?? '(none)'} is not on team shop`)
       const revision = String(document['revision'])
-      documents.push(held.has(`${name}=${revision}`) ? { interface: '1.0', document: name, revision, unchanged: true } : document)
+      // A teamrig stamps its own interface on an unchanged answer as on a document; this fake's is the document's.
+      const unchanged = { interface: document['interface'], document: name, revision, unchanged: true }
+      documents.push(held.has(`${name}=${revision}`) ? unchanged : document)
     }
     return printed(...documents)
   }
@@ -620,6 +643,86 @@ describe('DocumentSource: the plan', () => {
     const snapshot = await drawn(source, { force: true })
     expect(snapshot.problem).toContain("teamrig's plan document")
     expect(plannedIds(snapshot)).toEqual(['T1'])
+  })
+})
+
+/** The fake teamrig as interface 1.9 serves it: the plan at 1.9 and one step pending. */
+function servingSteps(teamrig: FakeTeamrig): void {
+  teamrig.plan = planDocument('p1', [planned('T1')], { interface: '1.9' })
+  teamrig.steps = stepsDocument('st1', [servedStep('config-format')])
+}
+
+function runs(teamrig: FakeTeamrig): (string | null)[][] {
+  return teamrig.taken().map(asked => [asked.documents.join(' '), asked.session])
+}
+
+describe('DocumentSource: the steps', () => {
+  test('a teamrig of interface 1.9 is asked for them beside the inbox once its first run says so, then in every run', async () => {
+    const { teamrig, source } = rig()
+    servingSteps(teamrig)
+    const first = await drawn(source)
+    expect(runs(teamrig)).toEqual([
+      ['tasks sessions config plan', null],
+      ['inbox steps', 'api'],
+    ])
+    expect(first.steps.map(step => step.id)).toEqual(['config-format'])
+    expect(first.problem).toBeNull()
+    const second = await drawn(source, { force: true })
+    expect(teamrig.taken().map(asked => [asked.documents.join(' '), asked.unless])).toEqual([
+      ['tasks sessions config inbox plan steps', 'tasks=t1,sessions=s1,config=c1,inbox=i1,plan=p1,steps=st1'],
+    ])
+    expect(second.steps.map(step => step.command)).toEqual(['/teamrig steps run config-format --yes'])
+  })
+
+  test('a teamrig older than 1.9 is never asked for them, and none are drawn', async () => {
+    const { teamrig, source } = rig()
+    const first = await drawn(source)
+    const second = await drawn(source, { force: true })
+    expect(teamrig.asked.some(asked => asked.documents.includes('steps'))).toBe(false)
+    expect([first.steps, second.steps]).toEqual([[], []])
+    expect(second.problem).toBeNull()
+  })
+
+  test('a teamrig updated to 1.9 is asked for them alone in the same read that first learns it', async () => {
+    const { teamrig, source } = rig()
+    await drawn(source)
+    teamrig.taken()
+    servingSteps(teamrig)
+    const snapshot = await drawn(source, { force: true })
+    expect(runs(teamrig)).toEqual([
+      ['tasks sessions config inbox plan', 'api'],
+      ['steps', 'api'],
+    ])
+    expect(snapshot.steps.map(step => step.id)).toEqual(['config-format'])
+  })
+
+  test('a teamrig moved back below 1.9 draws none of the steps held, and the next read stops asking', async () => {
+    const { teamrig, source } = rig()
+    servingSteps(teamrig)
+    await drawn(source)
+    teamrig.taken()
+    teamrig.plan = planDocument('p1', [planned('T1')])
+    teamrig.steps = null
+    const refusedOnce = await drawn(source, { force: true })
+    expect(runs(teamrig)).toEqual([
+      ['tasks sessions config inbox plan steps', 'api'],
+      ['tasks sessions config inbox', 'api'],
+    ])
+    expect(refusedOnce.steps).toEqual([])
+    expect(refusedOnce.problem).toBe(`REFUSED ${UNKNOWN_STEPS}`)
+    const next = await drawn(source, { force: true })
+    expect(runs(teamrig)).toEqual([['tasks sessions config inbox plan', 'api']])
+    expect(next.problem).toBeNull()
+  })
+
+  test('a step whose command takes anything else is left out and named, and its revision is held', async () => {
+    const { teamrig, source } = rig()
+    servingSteps(teamrig)
+    teamrig.steps = stepsDocument('st2', [servedStep('config-format'), servedStep('hooks-move', { command: '/teamrig steps run hooks-move; rm x' })])
+    const snapshot = await drawn(source)
+    expect(snapshot.steps.map(step => step.id)).toEqual(['config-format'])
+    expect(snapshot.problem).toContain('hooks-move (command)')
+    expect(source.heldRevision('steps')).toBe('st2')
   })
 })
 

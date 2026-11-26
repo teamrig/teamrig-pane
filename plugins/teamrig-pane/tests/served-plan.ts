@@ -139,8 +139,13 @@ export function planReadOf(fold: FoldSource): PlanRead {
   return plan.value
 }
 
-/** The fold as a snapshot holds it once teamrig served its plan: the plan, and the owner's cards titled from it. */
-export function withPlan<S extends FoldSource>(fold: S): S & { readonly plan: PlanRead; readonly ownerCards: Snapshot['ownerCards'] } {
+/**
+ * The fold as a snapshot holds it once teamrig served its plan: the plan, and the owner's cards titled from it, and
+ * no step pending unless the fold names its own (a fold reads no `steps` document).
+ */
+export function withPlan<S extends FoldSource>(
+  fold: S,
+): S & { readonly plan: PlanRead; readonly ownerCards: Snapshot['ownerCards']; readonly steps: Snapshot['steps'] } {
   const plan = planReadOf(fold)
-  return { ...fold, plan, ownerCards: titledCards(plan.ownerCards, fold.tasks, zoneNamed(fold.timeZone)) }
+  return { steps: [], ...fold, plan, ownerCards: titledCards(plan.ownerCards, fold.tasks, zoneNamed(fold.timeZone)) }
 }

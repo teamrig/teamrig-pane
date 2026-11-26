@@ -1690,12 +1690,12 @@ describe('source', () => {
 })
 
 
-/** The fold as the live loop's source, with no teamrig to serve a plan: so no owner's cards. */
+/** The fold as the live loop's source, with no teamrig to serve a plan or steps: so no owner's cards and no steps. */
 function servingNoCards(fold: TaskRegisterSource): SnapshotSource {
   return {
     poll: async input => {
       const snapshot = await fold.poll(input)
-      return snapshot === null ? null : { ...snapshot, ownerCards: {} }
+      return snapshot === null ? null : { ...snapshot, ownerCards: {}, steps: [] }
     },
   }
 }

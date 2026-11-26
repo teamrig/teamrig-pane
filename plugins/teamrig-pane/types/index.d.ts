@@ -218,15 +218,21 @@ export type Snapshot = {
    * none (older than interface 1.1).
    */
   plan: import('../hooks/plan-document').PlanRead | null
+  /**
+   * The one-time steps teamrig needs its person to take, in the order they are taken, as teamrig's steps document last
+   * served them (hooks/steps-document.ts): the band above the prompt shows them and offers to type each one's command.
+   * Empty with none pending, before a read, and from a teamrig that serves none (older than interface 1.9).
+   */
+  steps: readonly import('../hooks/steps-document').PendingStep[]
   /** When it was built, so due and age labels move on without a file change. */
   now: number
 }
 
 /**
- * What the fold of the register's files gives (hooks/source.ts): a snapshot without the cards on the owner, which
- * only teamrig's plan document serves (hooks/document-source.ts adds them).
+ * What the fold of the register's files gives (hooks/source.ts): a snapshot without the cards on the owner and the
+ * person's steps, which only teamrig's plan and steps documents serve (hooks/document-source.ts adds them).
  */
-export type FoldSnapshot = Omit<Snapshot, 'ownerCards'>
+export type FoldSnapshot = Omit<Snapshot, 'ownerCards' | 'steps'>
 
 /**
  * Each goal's parent, rank and open slice by its tag, what a ranking reads of a goal (core register/ranking.ts `goals`,

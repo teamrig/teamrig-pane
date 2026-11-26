@@ -256,6 +256,16 @@ export function statsDocument(revision: string, over: JsonRecord = {}): JsonReco
   }
 }
 
+/** A step as interface 1.9's `steps` document serves it (teamrig src/interface/steps.ts ServedStep). */
+export function servedStep(id: string, over: JsonRecord = {}): JsonRecord {
+  return { id, title: `Title of ${id}`, why: `Why ${id} is needed`, preview: [`${id} changes this`], command: `/teamrig steps run ${id} --yes`, ...over }
+}
+
+/** The `steps` document listing `steps`, in the order given, which is the order they are taken. */
+export function stepsDocument(revision: string, steps: readonly JsonRecord[], over: JsonRecord = {}): JsonRecord {
+  return { interface: '1.9', document: 'steps', revision, problems: [], steps, cuts: [], ...over }
+}
+
 /** One run as the fake teamrig was asked it. */
 export type Asked = { documents: readonly string[]; session: string | null; unless: string | null; conversation: string | null }
 
