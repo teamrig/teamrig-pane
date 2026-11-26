@@ -34,6 +34,8 @@ interface RunOptions {
   readonly cwd?: string;
   /** Text a frame must show before the keys are sent; any frame will do when none. */
   readonly until?: string;
+  /** Ends the input after the keys, as a pipe nobody writes to does (an AI CLI's shell tool). */
+  readonly endInput?: boolean;
 }
 
 /** The test's environment with `over` laid on it, less NODE_TEST_CONTEXT, which is for the runner's own children. */
@@ -62,6 +64,7 @@ function ranWith(keys: string, options: RunOptions = {}): Promise<Ended> {
       if (!isSent && out.includes(FRAME) && (options.until === undefined || out.includes(options.until))) {
         isSent = true;
         child.stdin.write(keys);
+        if (options.endInput === true) child.stdin.end();
       }
     });
     child.stderr.setEncoding('utf8').on('data', (chunk: string) => {
@@ -92,6 +95,13 @@ describe('the dedicated UI entry under node', () => {
     const ended = await ranWith('\u0003');
     assert.equal(ended.err, '');
     assert.equal(ended.code, 0);
+    assert.ok(ended.out.endsWith(GIVEN_BACK), 'the alternate screen is given back last');
+  });
+
+  it('ends with 1 on an input that ended before any key, the screen given back and the reason said', async () => {
+    const ended = await ranWith('', { endInput: true });
+    assert.equal(ended.code, 1);
+    assert.ok(ended.err.startsWith('teamrig ui: its input ended'), ended.err);
     assert.ok(ended.out.endsWith(GIVEN_BACK), 'the alternate screen is given back last');
   });
 

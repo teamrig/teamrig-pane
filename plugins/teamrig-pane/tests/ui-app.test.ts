@@ -95,6 +95,7 @@ function rig(size: Size, options: RigOptions = {}): Rig {
     onResize: listener => {
       onResize = listener
     },
+    onEnd: () => undefined,
     copy: text => {
       copied.push(text)
     },
