@@ -36,6 +36,15 @@ import type { DrawnSettings, FoldSnapshot, SessionOwnerCards, Snapshot, TaskRow 
  */
 export const READ_EVERY_MS = 60_000
 
+/**
+ * How long the documents stand unread while a live stream tells which of them moved: a safety for what its frames
+ * miss (a frame lost while the follower restarted, a one-time step), never the way a change is drawn.
+ */
+export const STREAM_READ_EVERY_MS = 600_000
+
+/** The document whose revision moves on every session's turn (the scores read spend): its marks read once a READ_EVERY_MS. */
+const PLAN = 'plan'
+
 /** What a poll answers: a snapshot when anything it draws from changed (or `force`), else null. */
 export type SnapshotSource = { poll(input: PollInput): Promise<Snapshot | null> }
 
@@ -107,6 +116,8 @@ export class DocumentSource implements SnapshotSource {
   private base: FoldSnapshot | null = null
   /** When the documents were last asked for; null before the first read. */
   private readAt: number | null = null
+  /** True when a stream marked the plan moved since the last read: it is read once READ_EVERY_MS passed since then. */
+  private isPlanMarked = false
   /** What the last read's runs could not answer. */
   private runProblems: readonly string[] = []
   /** Who the last run that answered asked as; null before one did. */
@@ -168,16 +179,43 @@ export class DocumentSource implements SnapshotSource {
    * the budget hooks write on every session's turn, is drawn with the documents held and starts no run: each run is
    * a `node` start every open pane would pay, and the plan, whose scores read the metered sizes, is read within
    * READ_EVERY_MS of such a move. A throw of the file source passes through, as the caller shows it.
+   *
+   * While a live stream serves every document (`input.stream`), its marks say when to read instead of the files: a
+   * file move it marks too would read twice, and an unchanged team would still read each READ_EVERY_MS (T5655).
    */
   async poll(input: PollInput): Promise<Snapshot | null> {
     const moved = await this.files.pollFiles(input)
     if (moved !== null) this.base = moved.snapshot
     const base = this.base
     if (base === null) return null
-    const isReadDue = moved?.isServedMoved === true || input.force === true || this.readAt === null || input.now - this.readAt >= READ_EVERY_MS
-    if (isReadDue) await this.read(base.team, input)
+    if (this.isReadDue(moved, input)) await this.read(base.team, input)
     else if (moved === null) return null
     return this.drawn(base, input)
+  }
+
+  /**
+   * Whether this poll reads the documents: on `force` and at the first poll always. Without a stream, when a file a
+   * served document is built from moved or READ_EVERY_MS passed. With one, when the area moved (its inbox is not the
+   * one followed), a frame marked a document other than the plan, the plan was marked and READ_EVERY_MS passed since
+   * the last read, the plan held went past its `validUntil` since that read (no frame marks the clock), or
+   * STREAM_READ_EVERY_MS passed.
+   */
+  private isReadDue(moved: FilePoll | null, input: PollInput): boolean {
+    const readAt = this.readAt
+    if (input.force === true || readAt === null) return true
+    const since = input.now - readAt
+    const stream = input.stream
+    if (stream === undefined) return moved?.isServedMoved === true || since >= READ_EVERY_MS
+    if (stream.marked.includes(PLAN)) this.isPlanMarked = true
+    const validUntil = this.plan.value?.validUntil ?? null
+    const isPlanExpired = validUntil !== null && readAt < validUntil && input.now >= validUntil
+    return (
+      moved?.isAreaMoved === true ||
+      stream.marked.some(document => document !== PLAN) ||
+      (this.isPlanMarked && since >= READ_EVERY_MS) ||
+      isPlanExpired ||
+      since >= STREAM_READ_EVERY_MS
+    )
   }
 
   /**
@@ -199,6 +237,7 @@ export class DocumentSource implements SnapshotSource {
    */
   private async read(team: string | null, input: PollInput): Promise<void> {
     this.readAt = input.now
+    this.isPlanMarked = false
     const problems: string[] = []
     const known = this.placeOf(team, input.pinned)
     let asked = known.areaName === null ? null : known.area

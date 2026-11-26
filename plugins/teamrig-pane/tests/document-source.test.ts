@@ -4,7 +4,7 @@
 // from the fold (T4742).
 import { describe, expect, test } from 'claude-code/testing'
 import { TimeZone } from '../hooks/core/read/index'
-import { DocumentSource, READ_EVERY_MS, titledCards, type FileSource } from '../hooks/document-source'
+import { DocumentSource, READ_EVERY_MS, STREAM_READ_EVERY_MS, titledCards, type FileSource } from '../hooks/document-source'
 import type { PlanRead } from '../hooks/plan-document'
 import { parseDocument, type JsonRecord } from '../hooks/read-document'
 import type { ReadPorts } from '../hooks/read-port'
@@ -131,6 +131,7 @@ const BASE: Snapshot = {
 class FakeFiles implements FileSource {
   next: Snapshot | Error | null
   private isServedMoved = true
+  private isAreaMoved = false
   readonly polls: PollInput[] = []
 
   constructor(first: Snapshot | Error | null = BASE) {
@@ -143,14 +144,22 @@ class FakeFiles implements FileSource {
     this.isServedMoved = false
   }
 
+  /** The next poll answers `snapshot` as a move of the area drawn. */
+  area(snapshot: Snapshot): void {
+    this.next = snapshot
+    this.isAreaMoved = true
+  }
+
   pollFiles(input: PollInput): Promise<FilePoll | null> {
     this.polls.push(input)
     const next = this.next
     const isServedMoved = this.isServedMoved
+    const isAreaMoved = this.isAreaMoved
     this.next = null
     this.isServedMoved = true
+    this.isAreaMoved = false
     if (next instanceof Error) return Promise.reject(next)
-    return Promise.resolve(next === null ? null : { snapshot: next, isServedMoved })
+    return Promise.resolve(next === null ? null : { snapshot: next, isServedMoved, isAreaMoved })
   }
 }
 
@@ -331,6 +340,64 @@ describe('DocumentSource: when it reads', () => {
     const late = await drawn(source, { now: NOW + READ_EVERY_MS })
     expect(teamrig.taken()).toHaveLength(1)
     expect(titles(late)).toEqual(['T5 Title of T5'])
+  })
+
+  test('while a live stream serves the documents, a moved file it did not mark starts no run, nor READ_EVERY_MS (T5655)', async () => {
+    const { teamrig, files, source } = rig()
+    await drawn(source)
+    teamrig.taken()
+    files.next = { ...BASE, work: [] }
+    const moved = await drawn(source, { now: NOW + 1, stream: { marked: [] } })
+    expect(teamrig.asked).toEqual([])
+    expect(moved.work).toEqual([])
+    expect(await source.poll(input({ now: NOW + READ_EVERY_MS, stream: { marked: [] } }))).toBeNull()
+    expect(teamrig.asked).toEqual([])
+    await drawn(source, { now: NOW + STREAM_READ_EVERY_MS - 1, stream: { marked: [] }, force: true })
+    expect(teamrig.taken()).toHaveLength(1)
+    expect(await source.poll(input({ now: NOW + 2 * STREAM_READ_EVERY_MS - 2, stream: { marked: [] } }))).toBeNull()
+    expect(teamrig.asked).toEqual([])
+    await drawn(source, { now: NOW + 2 * STREAM_READ_EVERY_MS - 1, stream: { marked: [] } })
+    expect(teamrig.taken()).toHaveLength(1)
+  })
+
+  test('with a live stream, a marked document reads at once, and so does a moved area', async () => {
+    const { teamrig, files, source } = rig()
+    await drawn(source)
+    teamrig.taken()
+    teamrig.tasks = tasksDocument('t2', [task('T5')])
+    const marked = await drawn(source, { now: NOW + 1, stream: { marked: ['tasks'] } })
+    expect(teamrig.taken()).toHaveLength(1)
+    expect(titles(marked)).toEqual(['T5 Title of T5'])
+    files.area(BASE)
+    await drawn(source, { now: NOW + 2, stream: { marked: [] } })
+    expect(teamrig.taken()).toHaveLength(1)
+  })
+
+  test('with a live stream, a plan mark reads once READ_EVERY_MS passed since the last read, kept across polls', async () => {
+    const { teamrig, source } = rig()
+    await drawn(source)
+    teamrig.taken()
+    expect(await source.poll(input({ now: NOW + 1, stream: { marked: ['plan'] } }))).toBeNull()
+    expect(await source.poll(input({ now: NOW + READ_EVERY_MS - 1, stream: { marked: [] } }))).toBeNull()
+    expect(teamrig.asked).toEqual([])
+    await drawn(source, { now: NOW + READ_EVERY_MS, stream: { marked: [] } })
+    expect(teamrig.taken()).toHaveLength(1)
+    expect(await source.poll(input({ now: NOW + 3 * READ_EVERY_MS, stream: { marked: [] } }))).toBeNull()
+    expect(teamrig.asked).toEqual([])
+  })
+
+  test('with a live stream, a plan held past its validUntil reads once, as no frame marks the clock', async () => {
+    const { teamrig, source } = rig()
+    // Inside STREAM_READ_EVERY_MS, so only the plan's clock can be what reads.
+    const validUntil = NOW + STREAM_READ_EVERY_MS / 2
+    teamrig.plan = planDocument('p1', [planned('T1')], { validUntil: new Date(validUntil).toISOString() })
+    await drawn(source)
+    teamrig.taken()
+    expect(await source.poll(input({ now: validUntil - 1, stream: { marked: [] } }))).toBeNull()
+    teamrig.plan = planDocument('p2', [planned('T2')])
+    await drawn(source, { now: validUntil, stream: { marked: [] } })
+    expect(teamrig.taken()).toHaveLength(1)
+    expect(await source.poll(input({ now: validUntil + 1, stream: { marked: [] } }))).toBeNull()
   })
 
   test('the first poll reads though only numbers moved', async () => {

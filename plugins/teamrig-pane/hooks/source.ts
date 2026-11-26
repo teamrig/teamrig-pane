@@ -298,6 +298,8 @@ export type FilePoll = {
    * score a metered size moves by little.
    */
   readonly isServedMoved: boolean
+  /** True when the area drawn changed: its inbox is another session's, which no frame of the stream followed marks. */
+  readonly isAreaMoved: boolean
 }
 
 export class TaskRegisterSource {
@@ -403,6 +405,6 @@ export class TaskRegisterSource {
       plan: null,
       now,
     }
-    return { snapshot, isServedMoved }
+    return { snapshot, isServedMoved, isAreaMoved: areaChanged }
   }
 }
