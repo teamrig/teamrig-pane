@@ -39,8 +39,8 @@ export const NO_FOLD_TEAM: Pick<FoldSnapshot, 'team' | 'areaName' | 'leads' | 'w
   taskCounts: NO_TASK_COUNTS,
   plan: null,
 }
-/** A snapshot's team fields when the pane found no team: the fold's, and no cards on the owner, as no plan was served. */
-export const NO_TEAM: Pick<Snapshot, keyof typeof NO_FOLD_TEAM | 'ownerCards'> = { ...NO_FOLD_TEAM, ownerCards: {} }
+/** A snapshot's team fields when the pane found no team: the fold's, and no cards on the owner or steps, as no plan or steps were served. */
+export const NO_TEAM: Pick<Snapshot, keyof typeof NO_FOLD_TEAM | 'ownerCards' | 'steps'> = { ...NO_FOLD_TEAM, ownerCards: {}, steps: [] }
 
 /** A tree that holds no goals and never moves: a source whose test is not about them. */
 export const NO_TREE_GOALS: GoalSource = { refresh: async () => false, current: {} }
