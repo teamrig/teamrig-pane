@@ -13,7 +13,7 @@ import { treeOf } from '../hooks/plan-tree'
 import { NO_SPEND } from '../hooks/ranking'
 import { barCounts } from '../hooks/status-bar'
 import { cells, graphemes } from '../hooks/width'
-import { MAX_READ_BYTES, TaskRegisterSource, registerPaths, skippedText, unlessMissing, type GoalSource, type RegisterPaths } from '../hooks/source'
+import { MAX_READ_BYTES, TaskRegisterSource, registerPaths, skippedText, unlessMissing, type GoalSource, type RegisterPaths, type StreamMarks } from '../hooks/source'
 import { areaView, MAX_FINISHED, ownerGroups, sameView } from '../hooks/view'
 import { HELD_DAYS } from '../hooks/done'
 import type { TeamFiles } from '../hooks/places'
@@ -1947,6 +1947,32 @@ describe('live', () => {
     await Promise.all([firstRead, pinned])
     expect(snapshot().area).toBe('po')
     expect(snapshot().tasks.length).toBe(1)
+  })
+
+  test('joined refreshes hand their poll every document they marked, and any refresh with no stream hands it none', async () => {
+    const { ports } = livePorts(new MemoryFiles(), [S1])
+    const source = ports.source
+    if ('missing' in source) throw new Error('livePorts serves a source')
+    const streams: (StreamMarks | undefined)[] = []
+    const live = new LiveRegister({
+      ...ports,
+      source: {
+        poll: input => {
+          streams.push(input.stream)
+          return source.poll(input)
+        },
+      },
+    })
+
+    await Promise.all([live.refresh({ marked: ['events'] }), live.refresh({ marked: ['plan', 'events'] })])
+    // The second ask joined the first poll before it read; the poll it asked again has nothing left to be told.
+    expect(streams).toEqual([{ marked: ['events', 'plan'] }, undefined])
+
+    await Promise.all([live.refresh({ marked: ['events'] }), live.refresh()])
+    expect(streams.slice(2)).toEqual([undefined, undefined])
+
+    await live.refresh({ marked: [] })
+    expect(streams.slice(4)).toEqual([{ marked: [] }])
   })
 
   test('keeps a session’s pin under a store key of its own', () => {

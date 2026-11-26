@@ -277,8 +277,14 @@ export class LayoutRegister {
   }
 }
 
-/** force: build a snapshot even when no file moved (after a failed poll or a new pin). */
-export type PollInput = { claudeSession: string; pinned: string | null; now: number; force?: boolean }
+/**
+ * What a live event stream that serves every register document said since the last poll: the documents its frames
+ * marked with a revision the source did not hold. Absent while no such stream is followed.
+ */
+export type StreamMarks = { readonly marked: readonly string[] }
+
+/** force: build a snapshot even when no file moved (after a failed poll or a new pin). stream: see StreamMarks. */
+export type PollInput = { claudeSession: string; pinned: string | null; now: number; force?: boolean; stream?: StreamMarks | undefined }
 
 /** What a poll of the files found. */
 export type FilePoll = {
