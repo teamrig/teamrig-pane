@@ -119,11 +119,17 @@ describe('the mouse', () => {
     expect(keysOf(`${ESC}[<80;2;2M`)).toEqual([{ kind: 'wheel', by: -1, column: 1, line: 1 }])
   })
 
-  test('another button, a move, or a report that is not three numbers from 1 is nothing', () => {
+  test('a move with no button held is a move onto its cell, a key held with it too', () => {
+    expect(keysOf(`${ESC}[<35;7;4M`)).toEqual([{ kind: 'move', column: 6, line: 3 }])
+    expect(keysOf(`${ESC}[<39;7;4M`)).toEqual([{ kind: 'move', column: 6, line: 3 }])
+  })
+
+  test('another button, a drag, or a report that is not three numbers from 1 is nothing', () => {
     expect(keysOf(`${ESC}[<1;2;2M`)).toEqual([])
     expect(keysOf(`${ESC}[<2;2;2M`)).toEqual([])
     expect(keysOf(`${ESC}[<32;2;2M`)).toEqual([])
-    expect(keysOf(`${ESC}[<35;2;2M`)).toEqual([])
+    expect(keysOf(`${ESC}[<34;2;2M`)).toEqual([])
+    expect(keysOf(`${ESC}[<35;2;2m`)).toEqual([])
     expect(keysOf(`${ESC}[<0;2M`)).toEqual([])
     expect(keysOf(`${ESC}[<0;2;2;2M`)).toEqual([])
     expect(keysOf(`${ESC}[<0;0;2M`)).toEqual([])

@@ -28,6 +28,8 @@ export type Key =
   | { readonly kind: 'click'; readonly column: number; readonly line: number }
   /** The wheel turned one notch over that cell: `by` 1 down the body, -1 up. */
   | { readonly kind: 'wheel'; readonly by: 1 | -1; readonly column: number; readonly line: number }
+  /** The pointer moved onto that cell with no button held: what a hover follows. */
+  | { readonly kind: 'move'; readonly column: number; readonly line: number }
 
 const ESC = '\u001b'
 /** A control sequence whole: its parameters, then its final byte. */
@@ -53,6 +55,8 @@ const CONTROL_KEYS: Readonly<Record<string, KeyName>> = {
 const HELD = 4 | 8 | 16
 const MOVED = 32
 const LEFT = 0
+/** The low button bits of a report that names no button: a move with none held. */
+const NO_BUTTON = 3
 const WHEEL_UP = 64
 const WHEEL_DOWN = 65
 
@@ -60,14 +64,18 @@ function named(name: KeyName | undefined): Key | null {
   return name === undefined ? null : { kind: 'key', name }
 }
 
-/** A mouse report `<button;column;line`, pressed (`M`) or let go (`m`): a click or a notch of the wheel, else nothing. */
+/**
+ * A mouse report `<button;column;line`, pressed (`M`) or let go (`m`): a click, a notch of the wheel or a move with no
+ * button held, else nothing. A move with a button held is a drag, which nothing here follows.
+ */
 function mouseKey(params: string, final: string): Key | null {
   const parts = params.slice(1).split(';')
   if (parts.length !== 3 || !parts.every(part => DIGITS.test(part))) return null
   const [button, x, y] = parts.map(Number)
   if (button === undefined || x === undefined || y === undefined) return null
-  if (x < 1 || y < 1 || final !== 'M' || (button & MOVED) !== 0) return null
+  if (x < 1 || y < 1 || final !== 'M') return null
   const at = { column: x - 1, line: y - 1 }
+  if ((button & MOVED) !== 0) return (button & ~HELD & ~MOVED) === NO_BUTTON ? { kind: 'move', ...at } : null
   switch (button & ~HELD) {
     case LEFT:
       return { kind: 'click', ...at }

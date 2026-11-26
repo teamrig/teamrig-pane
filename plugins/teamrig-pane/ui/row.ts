@@ -60,9 +60,10 @@ function fitted(text: string, room: number): string {
 /**
  * `row` laid out in a line: `left` blank cells, then its segments in `columns` cells. A row wider than that is cut
  * at a grapheme and ends in an ellipsis in its last column, so it stays one line; a stop the cut leaves no cell of
- * is no stop of the line. The runs of the stop keyed `ring` are drawn inverse: the focus ring stands there.
+ * is no stop of the line. The runs of the stop keyed `ring` are drawn inverse: the focus ring stands there. Those of
+ * the stop keyed `hover` are underlined: the pointer is over it, as the dock's buttons show a hover.
  */
-export function laid(row: Row, left: number, columns: number, ring: string | null): Laid {
+export function laid(row: Row, left: number, columns: number, ring: string | null, hover: string | null = null): Laid {
   const isCut = rowCells(row) > columns
   let room = isCut ? Math.max(0, columns - 1) : columns
   let at = Math.max(0, left)
@@ -71,13 +72,14 @@ export function laid(row: Row, left: number, columns: number, ring: string | nul
   for (const seg of row) {
     const from = at
     const isRing = seg.stop !== null && seg.stop.key === ring
+    const isHover = seg.stop !== null && seg.stop.key === hover
     for (const run of seg.runs) {
       const text = fitted(run.text, room)
       // A run cut short ends the line: a narrower one after it must not fill the cells a wide grapheme left.
       room = text === run.text ? room - cells(text) : 0
       if (text === '') continue
       at += cells(text)
-      runs.push({ ...run, text, inverse: run.inverse || isRing })
+      runs.push({ ...run, text, inverse: run.inverse || isRing, underline: run.underline || isHover })
     }
     if (seg.stop !== null && at > from) stops.push({ ...seg.stop, from, to: at })
   }

@@ -1,5 +1,5 @@
 // A row of the dedicated UI laid out in a line: its padding, its cut at the columns it has, where each stop stands
-// in cells, and the ring's stop drawn inverse.
+// in cells, the ring's stop drawn inverse and the hovered one underlined.
 import { describe, expect, test } from 'claude-code/testing'
 import { ELLIPSIS, laid, plain, spaces, type Row, type Seg, type Stop } from '../ui/row'
 import { words } from '../ui/run'
@@ -91,5 +91,22 @@ describe('a row laid out in a line', () => {
   test('a run drawn inverse already stays so off the ring', () => {
     const cursor = { ...words(' '), inverse: true }
     expect(laid([plain([cursor])], 0, 5, 'other').runs).toEqual([cursor])
+  })
+
+  test("the hovered stop is underlined, every run of it, and no other; the ring's stays inverse beside it", () => {
+    const row: Row = [{ runs: [words('T12'), words(' Ship')], stop: stop('task-12') }, spaces(1), button('b', 'all')]
+    const line = laid(row, 0, 40, 'b', 'task-12')
+    expect(line.runs.map(run => [run.text, run.underline, run.inverse])).toEqual([
+      ['T12', true, false],
+      [' Ship', true, false],
+      [' ', false, false],
+      ['all', false, true],
+    ])
+    expect(laid(row, 0, 40, null).runs.some(run => run.underline)).toBe(false)
+  })
+
+  test('a run underlined already, a link, stays so off the hover', () => {
+    const link = { ...words('docs'), underline: true }
+    expect(laid([plain([link])], 0, 5, null, 'other').runs).toEqual([link])
   })
 })

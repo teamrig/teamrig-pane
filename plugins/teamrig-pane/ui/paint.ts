@@ -21,6 +21,8 @@ export type Look = {
   readonly offset: number
   /** The key of the stop the focus ring stands on, null when it stands on none. */
   readonly ring: string | null
+  /** The key of the stop the pointer is over, drawn underlined; null when it is over none. */
+  readonly hover: string | null
   readonly typing: Typing | null
 }
 
@@ -72,7 +74,7 @@ function barRun(view: View, row: number): Run | null {
 function windowLines(rows: readonly Row[], view: View, look: Look): Line[] {
   const columns = bodyColumns(look.size)
   return Array.from({ length: view.visibleRows }, (_, i): Line => {
-    const line = laid(rows[i] ?? [], PADDING, columns, look.ring)
+    const line = laid(rows[i] ?? [], PADDING, columns, look.ring, look.hover)
     const bar = look.size.columns >= 2 * PADDING ? barRun(view, i) : null
     if (bar === null) return line
     const fill = PADDING + columns - line.width
@@ -82,11 +84,12 @@ function windowLines(rows: readonly Row[], view: View, look: Look): Line[] {
 
 /**
  * The frame of `head` over `body` on a screen of `look.size`: the head's rows, a blank row, then the body's window
- * at `look.offset`, the stop keyed `look.ring` drawn inverse. The minimized strip is its head alone.
+ * at `look.offset`, the stop keyed `look.ring` drawn inverse, the one keyed `look.hover` underlined. The minimized
+ * strip is its head alone.
  */
 export function paint(head: Head, body: readonly Drawn[], look: Look): Frame {
   const columns = bodyColumns(look.size)
-  const headLines: Line[] = headRowsOf(head, look.typing).map(row => laid(row, PADDING, columns, look.ring))
+  const headLines: Line[] = headRowsOf(head, look.typing).map(row => laid(row, PADDING, columns, look.ring, look.hover))
   const places = head.strip ? [] : placesOf(body, GAP)
   const view = head.strip ? null : viewOf(places, look.offset, windowRows(look.size, headLines.length))
   const under = view === null ? [] : [EMPTY, ...windowLines(frameOf(places, view).flatMap(slot => slotRows(slot, look.typing)), view, look)]

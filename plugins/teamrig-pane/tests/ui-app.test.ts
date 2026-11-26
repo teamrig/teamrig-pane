@@ -58,6 +58,8 @@ type Rig = {
   readonly store: WatchedStore
   /** Each drawing's lines as text. */
   readonly drawn: string[][]
+  /** Each drawing's underlined words, line by line. */
+  readonly underlined: string[][]
   readonly closes: () => number
   readonly over: Promise<void>
   /** Sends keys one after the other, then waits until no drawing is asked for. */
@@ -71,6 +73,7 @@ const tick = () => new Promise<void>(resolve => setTimeout(resolve, 0))
 function rig(size: Size, options: RigOptions = {}): Rig {
   const store = new WatchedStore(options.store ?? new MemoryStore(STATE))
   const drawn: string[][] = []
+  const underlined: string[][] = []
   const pending: (() => void)[] = []
   let now = size
   let closed = 0
@@ -80,6 +83,7 @@ function rig(size: Size, options: RigOptions = {}): Rig {
     draw: (lines: readonly (readonly Run[])[]) => {
       if (options.gone !== undefined) throw options.gone
       drawn.push(lines.map(line => line.map(run => run.text).join('').trimEnd()))
+      underlined.push(lines.map(line => line.filter(run => run.underline).map(run => run.text).join('')).filter(text => text !== ''))
     },
     size: () => now,
     onKey: listener => {
@@ -115,6 +119,7 @@ function rig(size: Size, options: RigOptions = {}): Rig {
   return {
     store,
     drawn,
+    underlined,
     closes: () => closed,
     over,
     idle,
@@ -232,6 +237,22 @@ describe('the ring', () => {
     await app.keys({ kind: 'click', column: WIDE - 1, line: 0 })
     expect((await app.store.read('ring')).count).toBe(1)
     expect(app.drawn.length).toBe(before + 1)
+  })
+
+  test('a move underlines the stop under the pointer, drawing again only when that stop changes', async () => {
+    const app = await started(SHORT)
+    const onMeetings = click(app, '[ Meetings ]')
+    const move = (column: number, line: number): Key => ({ kind: 'move', column, line })
+    expect(app.underlined.at(-1)).toEqual([])
+    await app.keys(move(onMeetings.column, onMeetings.line))
+    expect(app.drawn.length).toBe(2)
+    expect(app.underlined.at(-1)).toEqual(['[ Meetings ]'])
+    await app.keys(move(onMeetings.column + 1, onMeetings.line))
+    expect(app.drawn.length).toBe(2)
+    await app.keys(move(WIDE - 1, 0))
+    expect(app.drawn.length).toBe(3)
+    expect(app.underlined.at(-1)).toEqual([])
+    expect((await app.store.read('ring')).count).toBe(0)
   })
 
   test('Esc presses the way back', async () => {
