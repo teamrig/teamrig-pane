@@ -1,5 +1,25 @@
 # Changelog
 
+## [0.86.0](https://github.com/teamrig/teamrig-pane/compare/teamrig-pane-v0.85.0...teamrig-pane-v0.86.0) (2026-11-26)
+
+
+### Features
+
+* **pane:** read tasks a page at a time when one run is cut (T5464) ([b35fe92](https://github.com/teamrig/teamrig-pane/commit/b35fe9204ac4736bc79588b02fce6059c3791f28))
+* **ui-dev:** npm run ui:dev builds this checkout's UI and runs it in the caller's folder (T5129) ([2cd2bf9](https://github.com/teamrig/teamrig-pane/commit/2cd2bf9e8af7be471ba172452f772356840b84d4))
+* **ui:** the dedicated UI underlines the stop under the pointer, as the dock shows a hover (T5257) ([b0eba11](https://github.com/teamrig/teamrig-pane/commit/b0eba118853e46d3e7d3e1d9d52baf54fb159de8))
+* **ui:** y copies the ring's stop to the clipboard through OSC 52 (T5257) ([fa37da5](https://github.com/teamrig/teamrig-pane/commit/fa37da517d5d69cf49e5d39025c3852d44f45641))
+
+
+### Bug Fixes
+
+* **ui:** the UI ends with 1 once its input ends, so no key can reach it (T5756) ([650c6e8](https://github.com/teamrig/teamrig-pane/commit/650c6e8dcc2f9333b61a7a44cce9c874a0bf3a00))
+
+
+### Performance Improvements
+
+* **pane:** with a live stream serving every document, read only on a mark, a moved area, the plan's clock or every 10 min (T5655) ([ba71889](https://github.com/teamrig/teamrig-pane/commit/ba718890a9222c54be305ebc04cac201b106c7b7))
+
 ## [0.85.0](https://github.com/teamrig/teamrig-pane/compare/teamrig-pane-v0.84.0...teamrig-pane-v0.85.0) (2026-11-26)
 
 
