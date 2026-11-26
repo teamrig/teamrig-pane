@@ -83,6 +83,7 @@ import { TreeGoals } from './tree-goals'
 import { WrapCache, dockLayout, type CardPart, type Drawn } from './layout'
 import { diffKey, noteKey, pieceKey, placeOf, pressesFrom, standInsOf } from './press-keys'
 import { buttonCells } from './pack'
+import { fillArgs, filledLine, STEP_FILL_KEY, STEP_FILL_LABEL, stepShown, stepsBlock, STEPS_KEY } from './steps-notice'
 import { barSpans, blankSpans, frameOf, placesOf, revealed, scrolledBy, viewOf, type FrameSlot, type Placed, type View } from './frame'
 import { scrolledTo, settle, type Settled } from './body-scroll'
 import {
@@ -156,7 +157,7 @@ const GIT_TIMEOUT_MS = 10_000
  * value reads as absent (the empty snapshot, until the reload's first poll). Bump it whenever the
  * Snapshot or TaskRow type in ../types changes shape.
  */
-const SNAPSHOT_SHAPE = 'register-v18'
+const SNAPSHOT_SHAPE = 'register-v19'
 const snapshot = atom({ plugin: 'teamrig-pane', key: 'snapshot' } as const, INITIAL_STATE.snapshot, { shape: SNAPSHOT_SHAPE })
 const mode = atom({ plugin: 'teamrig-pane', key: 'mode' } as const, INITIAL_STATE.mode)
 /** The open cards are kept under a shape tag too (see SNAPSHOT_SHAPE): bump it when TaskDetail changes shape. */
@@ -417,6 +418,109 @@ function drawKeysLine({ Text }: FindComponents, keys: KeysAt, text: string) {
 
 /** With no team a word of `/teamrig-pane <session>` is the session's id itself. */
 const NO_TEAM_LOOKUP = (word: string): SessionFound => lookupSession(word, null, null)
+
+/**
+ * What the band (drawBand) reads from register's session: the session's start sets the readers and the title after
+ * register runs, so each is a getter read at the draw or the press; the wrap caches are the band's own.
+ */
+interface BandLives {
+  readonly sizer: () => PaneSizer | null
+  readonly logging: () => LiveLog | null
+  readonly title: () => string
+  readonly views: () => ViewLives
+  readonly detailOf: (task: TaskRow) => Promise<TaskDetail>
+  readonly bannerWraps: WrapCache
+  readonly previousWraps: WrapCache
+}
+
+// The steps notice (steps-notice.ts) on top of the band: the first one-time step teamrig needs, wrapped beside a
+// button that types its command into the prompt box as a draft and toasts how that went; none with no step pending.
+// At the module's top, as the engine allows `$` to be passed only to a function declared here.
+function drawSteps($: Context, { Box, Button, Text, Link }: Components, snap: Snapshot, columns: number, wraps: WrapCache) {
+  const step = stepShown(snap.steps)
+  if (step === null) return null
+  const fillCells = buttonCells({ label: STEP_FILL_LABEL, plain: false, hotkey: null }) + 1
+  const [notice] = dockLayout([stepsBlock(step, snap.steps.length)], columns - fillCells, wraps)
+  if (notice === undefined) return null
+  const fill = async () => $.ui.toast(filledLine(step, await $.prompt.fill(fillArgs(step))))
+  return (
+    <Box key={STEPS_KEY} flexDirection="row" columnGap={1}>
+      <Box flexGrow={1}>{drawSpans({ Text, Link }, notice.spans, notice.wrap)}</Box>
+      <Button key={STEP_FILL_KEY} label={STEP_FILL_LABEL} variant="secondary" onPress={() => void fill()} />
+    </Box>
+  )
+}
+
+// The banner and the previous conversation over it, as the band's hook in register draws them; null for a session
+// with no area. At the module's top for the same reason as drawSteps.
+async function drawBand($: Context, { Box, Button, Text, Link }: Components, snap: Snapshot, bodyColumns: number, lives: BandLives) {
+  if (snap.area === null) return null
+  const tree = treeOf(snap)
+  const isOpen = await read($, bannerOpen)
+  const name = sessionName(snap.area, snap.areaName)
+  const current = currentTask(snap, tree)
+  // The open button and the gap before it take their cells from the banner's width.
+  const openCells = current === null ? 0 : buttonCells({ label: BANNER_OPEN_LABEL, plain: false, hotkey: null }) + 1
+  const [banner] = dockLayout([bannerBlock(current, isOpen, tree, name)], bodyColumns - openCells, lives.bannerWraps)
+  if (banner === undefined) return null
+  const press = (
+    <Button key={BANNER_KEY} plain onPress={() => void toggleBanner(atomStore($))}>
+      {drawSpans({ Text, Link }, banner.spans, banner.wrap)}
+    </Button>
+  )
+  // Opens the pane as /teamrig-pane does, minimized or never opened too, at the task's page over the list at the
+  // task's row (presses.ts openTask): back shows the list scrolled to it.
+  const openInPane = async (shown: Current) => {
+    await lives.sizer()?.set('open')
+    await $.ui.open({ id: PANE, title: lives.title(), columns: DOCK_COLUMNS })
+    await openTask(atomStore($), shown, lives.detailOf)
+  }
+  // The banner's Box takes the columns the banner leaves free, so the button ends the row, beside the engine's [-].
+  const bannerRow =
+    current === null ? (
+      <Box>{press}</Box>
+    ) : (
+      <Box flexDirection="row" columnGap={1}>
+        <Box key={BANNER_FILL_KEY} flexGrow={1}>
+          {press}
+        </Box>
+        <Button key={BANNER_OPEN_KEY} label={BANNER_OPEN_LABEL} variant="secondary" onPress={() => void openInPane(current)} />
+      </Box>
+    )
+  const previous = await read($, previousConversation)
+  if (previous === null) return bannerRow
+  // Its buttons sit on the head row, so its title takes the frame's whole inner width.
+  const isPreviousOpen = await read($, previousOpen)
+  const previousColumns = bodyColumns - PREVIOUS_FRAME_CELLS
+  const [line] = dockLayout([previousBlock(previous, snap, isPreviousOpen, clockOf(snap))], previousColumns, lives.previousWraps)
+  if (line === undefined) return bannerRow
+  // Opens the pane as /teamrig-pane does on the list of conversations, and with `conversation` at its page.
+  const openConversations = async (conversation: LogRead | null) => {
+    await switchView(atomStore($), 'log', lives.views())
+    await $.ui.open({ id: PANE, title: lives.title(), columns: DOCK_COLUMNS })
+    if (conversation !== null) await openConversation(atomStore($), conversation, lives.logging())
+  }
+  const shown: LogRead = { session: previous.session, claude: previous.claude }
+  return (
+    <Box flexDirection="column">
+      <Box key={PREVIOUS_FRAME_KEY} flexDirection="column" borderStyle="round" borderDimColor paddingX={PREVIOUS_FRAME_PADDING}>
+        <Box key={PREVIOUS_HEAD_KEY} flexDirection="row" columnGap={1}>
+          <Box flexGrow={1}>
+            <Text dimColor>{PREVIOUS_LABEL}</Text>
+          </Box>
+          <Button key={PREVIOUS_OPEN_KEY} label={BANNER_OPEN_LABEL} variant="secondary" onPress={() => void openConversations(shown)} />
+          <Button key={PREVIOUS_ALL_KEY} label={PREVIOUS_ALL_LABEL} variant="secondary" onPress={() => void openConversations(null)} />
+        </Box>
+        <Box key={PREVIOUS_KEY}>
+          <Button key={PREVIOUS_PRESS_KEY} plain onPress={() => void togglePrevious(atomStore($))}>
+            {drawSpans({ Text, Link }, line.spans, line.wrap)}
+          </Button>
+        </Box>
+      </Box>
+      {bannerRow}
+    </Box>
+  )
+}
 
 export const register: Register = on => {
   let live: LiveRegister | null = null
@@ -1323,6 +1427,18 @@ export const register: Register = on => {
   const bannerWraps = new WrapCache()
   /** The previous conversation's row's own, for the same reason. */
   const previousWraps = new WrapCache()
+  /** The steps notice's own, for the same reason. */
+  const stepsWraps = new WrapCache()
+  /** What the band reads at a press: getters, since the session's start sets these after register runs. */
+  const bandLives: BandLives = {
+    sizer: () => sizer,
+    logging: () => logging,
+    title: () => title,
+    views: livesNow,
+    detailOf,
+    bannerWraps,
+    previousWraps,
+  }
   // The band above the prompt (AbovePrompt): the banner (banner.ts), the task the session works on now, one press that
   // opens its card and a second that closes it, wrapped at the band's width. A survey takes the band, and a session
   // with no area draws none, so a session outside a team gets no band from the pane. The engine scrolls a card
@@ -1331,76 +1447,21 @@ export const register: Register = on => {
   // previous conversation (previous-conversation.ts) in a dim frame, so it never reads as the banner: a head row with a
   // dim `previous conversation` label that names it (T2355), a button that opens its page and one the list of
   // conversations (T2249), then its title at the frame's whole width; none when the turn log holds none. A press on its
-  // title opens and closes it as the banner's does (T2302). No press has a hotkey: a band's hotkey answers a bare key
-  // typed in an empty prompt.
+  // title opens and closes it as the banner's does (T2302). On top, a step teamrig needs its person to take (T5015),
+  // drawn with no area too, since a step such as a config's new format matters before a session is on the team. No
+  // press has a hotkey: a band's hotkey answers a bare key typed in an empty prompt.
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
     if (e.props.hasSurvey) return next(e)
     const snap = await read($, snapshot)
-    if (snap.area === null) return next(e)
-    const { Box, Button, Text, Link } = $.ui.resolve(e)
-    const tree = treeOf(snap)
-    const isOpen = await read($, bannerOpen)
-    const name = sessionName(snap.area, snap.areaName)
-    const current = currentTask(snap, tree)
-    // The open button and the gap before it take their cells from the banner's width.
-    const openCells = current === null ? 0 : buttonCells({ label: BANNER_OPEN_LABEL, plain: false, hotkey: null }) + 1
-    const [banner] = dockLayout([bannerBlock(current, isOpen, tree, name)], e.props.bodyColumns - openCells, bannerWraps)
-    if (banner === undefined) return next(e)
-    const press = (
-      <Button key={BANNER_KEY} plain onPress={() => void toggleBanner(atomStore($))}>
-        {drawSpans({ Text, Link }, banner.spans, banner.wrap)}
-      </Button>
-    )
-    // Opens the pane as /teamrig-pane does, minimized or never opened too, at the task's page over the list at the
-    // task's row (presses.ts openTask): back shows the list scrolled to it.
-    const openInPane = async (shown: Current) => {
-      await sizer?.set('open')
-      await $.ui.open({ id: PANE, title, columns: DOCK_COLUMNS })
-      await openTask(atomStore($), shown, detailOf)
-    }
-    // The banner's Box takes the columns the banner leaves free, so the button ends the row, beside the engine's [-].
-    const bannerRow =
-      current === null ? (
-        <Box>{press}</Box>
-      ) : (
-        <Box flexDirection="row" columnGap={1}>
-          <Box key={BANNER_FILL_KEY} flexGrow={1}>
-            {press}
-          </Box>
-          <Button key={BANNER_OPEN_KEY} label={BANNER_OPEN_LABEL} variant="secondary" onPress={() => void openInPane(current)} />
-        </Box>
-      )
-    const previous = await read($, previousConversation)
-    if (previous === null) return bannerRow
-    // Its buttons sit on the head row, so its title takes the frame's whole inner width.
-    const isPreviousOpen = await read($, previousOpen)
-    const previousColumns = e.props.bodyColumns - PREVIOUS_FRAME_CELLS
-    const [line] = dockLayout([previousBlock(previous, snap, isPreviousOpen, clockOf(snap))], previousColumns, previousWraps)
-    if (line === undefined) return bannerRow
-    // Opens the pane as /teamrig-pane does on the list of conversations, and with `conversation` at its page.
-    const openConversations = async (conversation: LogRead | null) => {
-      await switchView(atomStore($), 'log', livesNow())
-      await $.ui.open({ id: PANE, title, columns: DOCK_COLUMNS })
-      if (conversation !== null) await openConversation(atomStore($), conversation, logging)
-    }
-    const shown: LogRead = { session: previous.session, claude: previous.claude }
+    const components = $.ui.resolve(e)
+    const { Box } = components
+    const steps = drawSteps($, components, snap, e.props.bodyColumns, stepsWraps)
+    const band = await drawBand($, components, snap, e.props.bodyColumns, bandLives)
+    if (steps === null) return band ?? next(e)
     return (
       <Box flexDirection="column">
-        <Box key={PREVIOUS_FRAME_KEY} flexDirection="column" borderStyle="round" borderDimColor paddingX={PREVIOUS_FRAME_PADDING}>
-          <Box key={PREVIOUS_HEAD_KEY} flexDirection="row" columnGap={1}>
-            <Box flexGrow={1}>
-              <Text dimColor>{PREVIOUS_LABEL}</Text>
-            </Box>
-            <Button key={PREVIOUS_OPEN_KEY} label={BANNER_OPEN_LABEL} variant="secondary" onPress={() => void openConversations(shown)} />
-            <Button key={PREVIOUS_ALL_KEY} label={PREVIOUS_ALL_LABEL} variant="secondary" onPress={() => void openConversations(null)} />
-          </Box>
-          <Box key={PREVIOUS_KEY}>
-            <Button key={PREVIOUS_PRESS_KEY} plain onPress={() => void togglePrevious(atomStore($))}>
-              {drawSpans({ Text, Link }, line.spans, line.wrap)}
-            </Button>
-          </Box>
-        </Box>
-        {bannerRow}
+        {steps}
+        {band}
       </Box>
     )
   })
