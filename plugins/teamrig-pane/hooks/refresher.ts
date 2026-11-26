@@ -8,7 +8,8 @@
 // does not serve, a tick every POLL_MS reads as U1's poll did (each read hands back the revisions held, so an
 // unchanged document costs the start alone). The same tick reads a view whose last read failed, a view that also
 // draws from what no document serves (`polls`: the team's files beneath the documents), and picks up a view shown
-// without `viewChanged` being told. A stream that ends is followed again after a wait that doubles from
+// without `viewChanged` being told. Each read is told the marks it was started for and whether the stream serves all
+// of its documents, so such a view folds its files without reading the documents the stream says did not move (T5655). A stream that ends is followed again after a wait that doubles from
 // RESTART_MIN_MS to RESTART_MAX_MS and starts over once a stream stayed open that long, so a follower that dies at
 // its start is not started every second. Runs nothing itself: reads and the stream are its ports.
 import type { Every } from './bounded-run'
@@ -22,6 +23,13 @@ export const POLL_MS = 10_000
 export const RESTART_MIN_MS = 1_000
 export const RESTART_MAX_MS = 60_000
 
+/**
+ * What the refresher knows as a read starts: the documents frames marked with a revision the subject did not hold,
+ * and whether a live stream serves every document of the subject, so a subject that `polls` can tell its files'
+ * moves from what the stream already says.
+ */
+export type RefreshAsk = { readonly marked: readonly string[]; readonly isFollowed: boolean }
+
 /** One view's reader, as the refresher drives it. */
 export type Subject = {
   /** The documents its view draws from, by the names `teamrig events` takes; at least one. */
@@ -33,7 +41,7 @@ export type Subject = {
   /** The revision it holds of `document`; null when none. */
   readonly held: (document: string) => string | null
   /** Reads its documents again and draws them; answers whether the read worked. A rejection is taken as a failed read. */
-  readonly refresh: () => Promise<boolean>
+  readonly refresh: (ask: RefreshAsk) => Promise<boolean>
 }
 
 export type RefresherPorts = {
@@ -89,9 +97,9 @@ async function isDrawn(subject: Subject): Promise<boolean> {
   }
 }
 
-async function hasRead(subject: Subject): Promise<boolean> {
+async function hasRead(subject: Subject, ask: RefreshAsk): Promise<boolean> {
   try {
-    return await subject.refresh()
+    return await subject.refresh(ask)
   } catch {
     return false
   }
@@ -256,10 +264,15 @@ export class Refresher {
 
   /** Whether `tracked` has something to read: a forced read, or a mark its subject does not hold; marks it holds go. */
   private isStale(tracked: Tracked): boolean {
+    this.dropHeld(tracked)
+    return tracked.mustRead || tracked.marks.size > 0
+  }
+
+  /** Drops the marks of revisions `tracked`'s subject holds now. */
+  private dropHeld(tracked: Tracked): void {
     for (const [document, revision] of tracked.marks) {
       if (revision !== null && tracked.subject.held(document) === revision) tracked.marks.delete(document)
     }
-    return tracked.mustRead || tracked.marks.size > 0
   }
 
   /** Reads `tracked` when it is stale, drawn, not reading and past its gap; else leaves it as it is. */
@@ -270,13 +283,19 @@ export class Refresher {
     try {
       if (!(await isDrawn(tracked.subject)) || this.run !== run) return
       tracked.mustRead = false
+      // Weighed after the check that it is drawn: the marks told are those it still does not hold.
+      this.dropHeld(tracked)
+      const ask: RefreshAsk = {
+        marked: [...tracked.marks.keys()],
+        isFollowed: run.isLive && tracked.subject.documents.every(document => run.served.has(document)),
+      }
       tracked.marks.clear()
       tracked.gap = this.once(run, GAP_MS, () => {
         tracked.gap = null
         void this.pump(run, tracked)
       })
       didRead = true
-      tracked.hasFailed = !(await hasRead(tracked.subject))
+      tracked.hasFailed = !(await hasRead(tracked.subject, ask))
     } finally {
       tracked.isBusy = false
     }

@@ -5,7 +5,7 @@
 import { describe, expect, test } from 'claude-code/testing'
 import type { Every } from '../hooks/bounded-run'
 import type { ChangeFeed, FeedEnd, FeedListener } from '../hooks/change-feed'
-import { GAP_MS, POLL_MS, RESTART_MAX_MS, RESTART_MIN_MS, Refresher, type Subject } from '../hooks/refresher'
+import { GAP_MS, POLL_MS, RESTART_MAX_MS, RESTART_MIN_MS, Refresher, type RefreshAsk, type Subject } from '../hooks/refresher'
 
 /** Lets every promise already settled run its continuations. */
 async function settle(): Promise<void> {
@@ -78,6 +78,8 @@ function scriptedFeed(): { feed: ChangeFeed; follows: Followed[]; stream: () => 
 type View = {
   readonly subject: Subject
   reads: number
+  /** What each read was told, in order. */
+  readonly asks: RefreshAsk[]
   isShown: boolean
   /** What its next reads answer; an Error rejects. */
   answer: boolean | Error
@@ -98,14 +100,16 @@ function viewPolling(polls: boolean, ...documents: string[]): View {
       polls,
       isShown: () => Promise.resolve(view.isShown),
       held: document => view.held.get(document) ?? null,
-      refresh: async () => {
+      refresh: async ask => {
         view.reads += 1
+        view.asks.push(ask)
         if (view.isSlow) await new Promise<void>(resolve => (view.finish = resolve))
         if (view.answer instanceof Error) throw view.answer
         return view.answer
       },
     },
     reads: 0,
+    asks: [],
     isShown: true,
     answer: true,
     held: new Map(),
@@ -183,6 +187,22 @@ describe('Refresher', () => {
     feed.stream().onFrame(hello(['tasks', 'r7'], ['inbox', 'r3']))
     await settle()
     expect([tasks.reads, inbox.reads]).toEqual([1, 2])
+  })
+
+  test('each read is told the marks it was started for, held ones dropped, and whether the stream serves its documents (T5655)', async () => {
+    const tasks = viewPolling(true, 'tasks', 'plan')
+    tasks.held.set('tasks', 'r7')
+    tasks.held.set('plan', 'p1')
+    const { feed, clock } = await started(tasks)
+    expect(tasks.asks).toEqual([{ marked: [], isFollowed: false }])
+    feed.stream().onFrame(hello(['tasks', 'r7']))
+    await clock.advance(GAP_MS)
+    feed.stream().onFrame(changed(['tasks', 'r7'], ['plan', 'p2']))
+    await settle()
+    expect(tasks.asks.slice(1)).toEqual([{ marked: ['plan'], isFollowed: false }])
+    feed.stream().onFrame(hello(['tasks', 'r7'], ['plan', 'p1']))
+    await clock.advance(POLL_MS)
+    expect(tasks.asks.slice(2)).toEqual([{ marked: [], isFollowed: true }])
   })
 
   test('a changed frame reads at once the view that draws the document, and no other', async () => {

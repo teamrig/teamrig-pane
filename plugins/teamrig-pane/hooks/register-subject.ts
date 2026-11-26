@@ -2,11 +2,13 @@
 // from the `tasks`, `sessions`, `config`, `inbox` and `plan` documents, so a frame marking one of them reads the
 // register again (live.ts) through the document source (document-source.ts), which hands back what it holds. The
 // register also folds the team's files beneath the documents (work marks, spend), which no frame marks, so it keeps
-// the refresher's tick (`polls`). The stream follows as whoever the source last asked as; once the source asks as
+// the refresher's tick (`polls`); while the stream serves every document, each read hands the source the marks it
+// was started for, and the source reads the documents only for those (T5655). The stream follows as whoever the source last asked as; once the source asks as
 // another session or conversation (a pin, the area found, a /clear), the stream is followed again so the inbox it
 // marks is the one drawn. Runs nothing itself.
 import type { ReadAsker } from './read-port'
 import type { Subject } from './refresher'
+import type { StreamMarks } from './source'
 
 /** The documents the register draws from, by the names `teamrig events` takes. */
 export const REGISTER_DOCUMENTS: readonly string[] = ['tasks', 'sessions', 'config', 'inbox', 'plan']
@@ -49,8 +51,11 @@ export class FollowedAsker {
 }
 
 export type RegisterSubjectPorts = {
-  /** Reads the register again and draws it; answers whether the read worked (live.ts). */
-  readonly refresh: () => Promise<boolean>
+  /**
+   * Reads the register again and draws it; answers whether the read worked (live.ts). `stream` is what a live stream
+   * serving every register document marked, absent while none does.
+   */
+  readonly refresh: (stream?: StreamMarks) => Promise<boolean>
   readonly documents: HeldDocuments
   readonly asker: FollowedAsker
   /** Follows the stream again at once, as the refresher's `refollow`. */
@@ -69,8 +74,8 @@ export function registerSubject(ports: RegisterSubjectPorts): Subject {
     // The register feeds the band and the status line as well as the views, so it is read whatever view shows.
     isShown: () => Promise.resolve(true),
     held: document => ports.documents.heldRevision(document),
-    refresh: async () => {
-      const hasRead = await ports.refresh()
+    refresh: async ask => {
+      const hasRead = await ports.refresh(ask.isFollowed ? { marked: ask.marked } : undefined)
       refollowIfMoved(ports)
       return hasRead
     },

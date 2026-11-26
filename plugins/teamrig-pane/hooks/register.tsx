@@ -706,7 +706,7 @@ export const register: Register = on => {
       // tick. The follower runs the CLI the reads do, as whoever they last asked as, in the tab's folder.
       const asker = new FollowedAsker(held)
       const feed = 'missing' in source ? NO_FEED : spawnFeed({ spawn: request => $.process.spawn({ ...request, cwd: e.cwd }), cli: () => Promise.resolve(cli), asker: () => asker.take() })
-      const follows = new Refresher({ feed, every: (ms, fn) => $.clock.every(ms, fn) }, [registerSubject({ refresh: () => started.refresh(), documents: held, asker, refollow: () => follows.refollow() })])
+      const follows = new Refresher({ feed, every: (ms, fn) => $.clock.every(ms, fn) }, [registerSubject({ refresh: stream => started.refresh(stream), documents: held, asker, refollow: () => follows.refollow() })])
       refresher = follows
       pinning = {
         pin: async area => {

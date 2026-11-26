@@ -13,6 +13,7 @@ import type { Snapshot } from '../types'
 import { SESSION_NAME } from './core/read/index'
 import { messageOf } from './errors'
 import type { SnapshotSource } from './document-source'
+import type { StreamMarks } from './source'
 import { sameView } from './view'
 
 export const POLL_MS = 3_000
@@ -44,12 +45,17 @@ export function storedPin(value: unknown): string | null {
 
 type BoundSession = { id: string; pinned: string | null }
 
+/** Refreshes joined for one poll: followed only when each of them was, with every document any of them marked. */
+type JoinedAsk = { isFollowed: boolean; readonly marked: Set<string> }
+
 export class LiveRegister {
   private timers: Timer[] = []
   /** The poll under way, which every refresh asked meanwhile awaits; null when none runs. */
   private polling: Promise<boolean> | null = null
   /** Set by a refresh asked while a poll runs, so that poll reads once more when it ends. */
   private isRerunAsked = false
+  /** What the refreshes asked since the last poll began told of the stream, joined; null when none was asked. */
+  private asked: JoinedAsk | null = null
   private session: BoundSession | null = null
   /** Set after a failed poll, a new pin or a new session, so the next good poll redraws even when no file moved. */
   private mustPublish = true
@@ -87,9 +93,12 @@ export class LiveRegister {
   /**
    * Polls the source and draws what changed. Answers whether the last poll worked: false with no source or when it
    * threw (its reason drawn). A refresh asked while a poll runs joins it, and that poll reads once more when it ends:
-   * the read under way may have started before the pin or the file move that asked for this one.
+   * the read under way may have started before the pin or the file move that asked for this one. `stream` is what a
+   * live stream serving every register document marked (register-subject.ts); a refresh without it, a pin's or one
+   * while no stream is live, has the next poll read as the files say.
    */
-  refresh(): Promise<boolean> {
+  refresh(stream?: StreamMarks): Promise<boolean> {
+    this.join(stream)
     if (this.polling !== null) {
       this.isRerunAsked = true
       return this.polling
@@ -98,6 +107,23 @@ export class LiveRegister {
       this.polling = null
     })
     return this.polling
+  }
+
+  private join(stream: StreamMarks | undefined): void {
+    const asked = this.asked
+    if (asked === null) {
+      this.asked = { isFollowed: stream !== undefined, marked: new Set(stream?.marked ?? []) }
+      return
+    }
+    asked.isFollowed = asked.isFollowed && stream !== undefined
+    for (const document of stream?.marked ?? []) asked.marked.add(document)
+  }
+
+  /** The joined asks for the poll starting now, cleared for the refreshes asked during it. */
+  private takeStream(): StreamMarks | undefined {
+    const asked = this.asked
+    this.asked = null
+    return asked !== null && asked.isFollowed ? { marked: [...asked.marked] } : undefined
   }
 
   private async pollUntilSettled(): Promise<boolean> {
@@ -121,7 +147,8 @@ export class LiveRegister {
       // Taken before the read, so a pin or new session that sets it during the read still forces the next one.
       const force = this.mustPublish
       this.mustPublish = false
-      const next = await source.poll({ claudeSession: session.id, pinned: session.pinned, now, force })
+      const stream = this.takeStream()
+      const next = await source.poll({ claudeSession: session.id, pinned: session.pinned, now, force, stream })
       if (next && (this.shown === null || !sameView(this.shown, next))) await this.write(() => next)
       return true
     } catch (error) {
