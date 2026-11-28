@@ -11,7 +11,7 @@ import type { ReadPorts } from '../hooks/read-port'
 import { CONTROL_SHOWN } from '../hooks/shown-text'
 import type { FilePoll, PollInput } from '../hooks/source'
 import { tasksOf } from '../hooks/tasks-document'
-import type { CliRun, TeamrigCli } from '../hooks/teamrig-cli'
+import { fixedCli, type CliRun, type TeamrigCli } from '../hooks/teamrig-cli'
 import type { Snapshot, TaskRow } from '../types'
 import { HOUR, NO_TEAM, NOW, SNAPSHOT_SETTINGS } from './fixtures'
 import {
@@ -168,7 +168,7 @@ type Rig = { teamrig: FakeTeamrig; files: FakeFiles; source: DocumentSource }
 function rig(first: Snapshot | Error | null = BASE, cli: TeamrigCli = CLI): Rig {
   const teamrig = new FakeTeamrig()
   const files = new FakeFiles(first)
-  return { teamrig, files, source: new DocumentSource(files, cli, teamrig.ports) }
+  return { teamrig, files, source: new DocumentSource(files, fixedCli(cli), teamrig.ports) }
 }
 
 function input(over: Partial<PollInput> = {}): PollInput {

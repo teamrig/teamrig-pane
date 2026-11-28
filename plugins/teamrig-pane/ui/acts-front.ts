@@ -6,7 +6,7 @@
 import { OwnerActs } from '../hooks/owner-acts'
 import type { PaneStore } from '../hooks/pane-store'
 import { SessionActs } from '../hooks/session-acts'
-import type { CliRun, TeamrigCli } from '../hooks/teamrig-cli'
+import { fixedCli, type CliRun, type TeamrigCli } from '../hooks/teamrig-cli'
 import type { Focus, Front } from './app'
 
 export type ActsDeps = {
@@ -23,14 +23,14 @@ export function withActs(under: Front, deps: ActsDeps): (focus: Focus) => Front 
   let made: Front | null = null
   return focus => {
     if (made !== null) return made
-    const acting = new OwnerActs(deps.cli, {
+    const acting = new OwnerActs(fixedCli(deps.cli), {
       run: deps.run,
       tell: async act => {
         await deps.store.update('ownerAct', () => act)
       },
       focus,
     })
-    const pressing = new SessionActs(deps.cli, {
+    const pressing = new SessionActs(fixedCli(deps.cli), {
       run: deps.run,
       tell: async answer => {
         await deps.store.update('sessionAnswer', () => answer)

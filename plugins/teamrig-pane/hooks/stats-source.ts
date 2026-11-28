@@ -15,7 +15,7 @@ import { readDocuments, type ReadNarrowing, type ReadPorts } from './read-port'
 import type { SessionsRead } from './sessions-document'
 import { areaListKey } from './stats-areas'
 import { statsOf, type StatsRead } from './stats-document'
-import type { TeamrigCli } from './teamrig-cli'
+import type { CliSource } from './teamrig-cli'
 
 /** What the tab picked: the scope, the range, and the Health count or area cell whose tasks it lists (null for none). */
 export type StatsPick = { readonly scope: StatsChoice; readonly range: StatsRange; readonly list: StatsListPick | null }
@@ -78,7 +78,7 @@ type Asked = { readonly key: string; readonly document: Held<StatsRead> }
 
 /** Reads the picked scope's stats again while the Stats tab shows, and writes them when they changed. */
 export class LiveStats {
-  private readonly cli: TeamrigCli
+  private readonly cli: CliSource
   /** The pane's own team. */
   private readonly team: string
   private readonly ports: StatsPorts
@@ -90,7 +90,7 @@ export class LiveStats {
   /** The view last written, as JSON: a read that finds the same numbers writes nothing. */
   private shown: string | null = null
 
-  constructor(cli: TeamrigCli, team: string, ports: StatsPorts) {
+  constructor(cli: CliSource, team: string, ports: StatsPorts) {
     this.cli = cli
     this.team = team
     this.ports = ports
@@ -154,7 +154,7 @@ export class LiveStats {
     const held = asked.document
     const isStale = held.value !== null && now >= held.value.validUntil
     const result = await readDocuments(
-      this.cli,
+      this.cli.current(),
       this.ports,
       [{ name: 'stats', held: isStale ? null : held.revision }],
       { session: null, conversation: await this.ports.conversation() },

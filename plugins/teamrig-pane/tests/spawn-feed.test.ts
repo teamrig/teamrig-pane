@@ -1,12 +1,13 @@
 // The dock's event stream over `$.process.spawn` (hooks/spawn-feed.ts): it starts `teamrig events --json` for the
 // documents followed, as the pane's asker; reads stdout's pieces as frames, cut anywhere; ends `ended` after a hello,
 // `unavailable` when the CLI is missing, the child cannot start or it exits non-zero before any hello; and `stop`
-// returns the stream, which is what kills the child, after which the listener hears nothing (T4760).
+// returns the stream, which is what kills the child, after which the listener hears nothing (T4760). Each follow asks
+// where the CLI is, so the one after an update's end runs the new install (T5859).
 import { describe, expect, test } from 'claude-code/testing'
 import type { FeedEnd, FeedFrame } from '../hooks/change-feed'
 import type { ReadAsker } from '../hooks/read-port'
 import { eventsWords, followable, spawnFeed, STDERR_KEPT_CHARS, type SpawnChunk, type SpawnEnd, type SpawnStream } from '../hooks/spawn-feed'
-import type { TeamrigCli } from '../hooks/teamrig-cli'
+import { CliHolder, findTeamrigCli, type TeamrigCli } from '../hooks/teamrig-cli'
 
 async function settle(): Promise<void> {
   for (let turn = 0; turn < 40; turn += 1) await Promise.resolve()
@@ -257,6 +258,55 @@ describe('spawnFeed', () => {
     children[0]?.write(CHANGED)
     await settle()
     expect([children[0]?.returns, heard]).toEqual([1, ['hello tasks@r1,inbox@i1']])
+  })
+
+  test('a follow after an update ended the last runs the CLI installed now, never the one the tab first found (T5859)', async () => {
+    const list = 'D:/profile/.claude/plugins/installed_plugins.json'
+    const oldMain = 'D:/plugins/teamrig/0.1.0/dist/cli/main.js'
+    const newMain = 'D:/plugins/teamrig/0.2.0/dist/cli/main.js'
+    const listOf = (install: string): string => JSON.stringify({ version: 2, plugins: { 'teamrig@teamrig': [{ installPath: install }] } })
+    const files = new Map<string, string>([
+      [list, listOf('D:/plugins/teamrig/0.1.0')],
+      [oldMain, ''],
+      [newMain, ''],
+    ])
+    const holder = await CliHolder.start(() =>
+      findTeamrigCli(
+        {
+          exists: async path => files.has(path),
+          read: async path => files.get(path) ?? Promise.reject(new Error(`ENOENT: ${path}`)),
+        },
+        { configDir: undefined, home: 'D:/profile', path: undefined },
+      ),
+    )
+    const children: ScriptedChild[] = []
+    const heard: string[] = []
+    const feed = spawnFeed({
+      spawn: request => {
+        const child = new ScriptedChild(request.argv)
+        children.push(child)
+        return child.stream
+      },
+      cli: () => holder.refind(),
+      asker: () => ASKER,
+    })
+    const listener = {
+      onFrame: (frame: FeedFrame) => heard.push(frame.event),
+      onProblem: (reason: string) => heard.push(`problem ${reason}`),
+      onEnd: (end: FeedEnd) => heard.push(`end ${end}`),
+    }
+    feed.follow(['tasks'], listener)
+    await settle()
+    // The update installs the new version and the plugin list names it; the newer teamrig ends the old follower.
+    files.set(list, listOf('D:/plugins/teamrig/0.2.0'))
+    children[0]?.write(HELLO)
+    children[0]?.end({ code: 0, signal: null })
+    await settle()
+    feed.follow(['tasks'], listener)
+    await settle()
+    expect(heard).toEqual(['hello', 'end ended'])
+    expect(children.map(child => child.argv[1])).toEqual([oldMain, newMain])
+    expect(holder.current()).toEqual({ kind: 'found', main: newMain })
   })
 
   test('a stop before the CLI is found starts no child', async () => {

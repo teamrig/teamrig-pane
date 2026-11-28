@@ -5,7 +5,7 @@
 import { describe, expect, test } from 'claude-code/testing'
 import type { SessionAnswer, SessionPress } from '../types'
 import { MEET_TIMEOUT_MS, SessionActs, WAKE_TIMEOUT_MS, actOutcome, actWords, type SessionActPorts } from '../hooks/session-acts'
-import { cliArgv, type CliRun, type TeamrigCli } from '../hooks/teamrig-cli'
+import { cliArgv, fixedCli, type CliRun, type TeamrigCli } from '../hooks/teamrig-cli'
 import { NOW } from './fixtures'
 
 const CLI: TeamrigCli = { kind: 'found', main: 'K/teamrig/dist/cli/main.js' }
@@ -75,7 +75,7 @@ describe('actOutcome', () => {
 describe('SessionActs', () => {
   test('a meet tells it runs at the press, runs teamrig meet on the session with no --session, then tells what it answered when it did', async () => {
     const ports = portsOf(ok(`${WOKE}\n`))
-    await new SessionActs(CLI, ports).press(MEET_API)
+    await new SessionActs(fixedCli(CLI), ports).press(MEET_API)
     expect(ports.runs).toEqual([{ args: cliArgv(CLI.main, ['meet', 'api']), timeoutMs: MEET_TIMEOUT_MS }])
     expect(ports.runs[0]?.args).toEqual(['node', CLI.main, 'meet', 'api'])
     expect(ports.told).toEqual([
@@ -86,7 +86,7 @@ describe('SessionActs', () => {
 
   test('a wake runs teamrig owner wake on the team and session with its own time, then tells what it answered', async () => {
     const ports = portsOf(ok(`${WAKES}\n`))
-    await new SessionActs(CLI, ports).press(WAKE_API)
+    await new SessionActs(fixedCli(CLI), ports).press(WAKE_API)
     expect(ports.runs).toEqual([{ args: ['node', CLI.main, 'owner', 'wake', 'acme/api'], timeoutMs: WAKE_TIMEOUT_MS }])
     expect(ports.told).toEqual([
       { ...WAKE_API, outcome: 'running', lines: [], at: NOW },
@@ -96,29 +96,29 @@ describe('SessionActs', () => {
 
   test('a refused wake tells the REFUSED line verbatim; one that does not finish names its words', async () => {
     const busy = portsOf(failed(2, `${BUSY}\n`))
-    await new SessionActs(CLI, busy).press(WAKE_API)
+    await new SessionActs(fixedCli(CLI), busy).press(WAKE_API)
     expect(busy.told[1]).toEqual({ ...WAKE_API, outcome: 'refused', lines: [BUSY], at: ANSWERED })
     const stuck = portsOf(new Error('timed out'))
-    await new SessionActs(CLI, stuck).press(WAKE_API)
+    await new SessionActs(fixedCli(CLI), stuck).press(WAKE_API)
     expect(stuck.told[1]).toEqual({ ...WAKE_API, outcome: 'refused', lines: ['teamrig owner wake acme/api did not finish: timed out'], at: ANSWERED })
   })
 
   test('a refused meet tells why, and when the CLI answered', async () => {
     const ports = portsOf(failed(2, NO_CARD))
-    await new SessionActs(CLI, ports).press(MEET_API)
+    await new SessionActs(fixedCli(CLI), ports).press(MEET_API)
     expect(ports.told[1]).toEqual({ ...MEET_API, outcome: 'refused', lines: [NO_CARD], at: ANSWERED })
   })
 
   test('with no teamrig CLI found, a press runs nothing and is refused with the problem at once', async () => {
     const ports = portsOf(ok(WOKE))
-    await new SessionActs({ kind: 'missing', problem: 'teamrig is not installed' }, ports).press(MEET_API)
+    await new SessionActs(fixedCli({ kind: 'missing', problem: 'teamrig is not installed' }), ports).press(MEET_API)
     expect(ports.runs).toEqual([])
     expect(ports.told[1]).toEqual({ ...MEET_API, outcome: 'refused', lines: ['teamrig is not installed'], at: NOW })
   })
 
   test('a run that does not finish is told as refused, when it gave up', async () => {
     const ports = portsOf(new Error('timed out'))
-    await new SessionActs(CLI, ports).press(MEET_WEB)
+    await new SessionActs(fixedCli(CLI), ports).press(MEET_WEB)
     expect(ports.told[1]).toEqual({ ...MEET_WEB, outcome: 'refused', lines: ['teamrig meet web did not finish: timed out'], at: ANSWERED })
   })
 
@@ -136,7 +136,7 @@ describe('SessionActs', () => {
         return ports.run(args, timeoutMs)
       },
     }
-    const acts = new SessionActs(CLI, slow)
+    const acts = new SessionActs(fixedCli(CLI), slow)
     const first = acts.press(MEET_API)
     await acts.press(MEET_WEB)
     open()
@@ -159,7 +159,7 @@ describe('SessionActs', () => {
         throw new Error('store closed')
       },
     }
-    const acts = new SessionActs(CLI, failing)
+    const acts = new SessionActs(fixedCli(CLI), failing)
     await acts.press(MEET_API)
     await acts.press(MEET_API)
     expect(tells).toBe(2)

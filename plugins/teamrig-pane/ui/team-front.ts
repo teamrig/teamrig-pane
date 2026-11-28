@@ -19,7 +19,7 @@ import { RefFileReader } from '../hooks/ref-file'
 import { Refresher } from '../hooks/refresher'
 import { FollowedAsker, registerSubject, type HeldDocuments } from '../hooks/register-subject'
 import { registerPaths, TaskRegisterSource, type Files } from '../hooks/source'
-import { findTeamrigCli, UI_LOOKUPS, type CliFiles, type CliRun, type TeamrigCli } from '../hooks/teamrig-cli'
+import { findTeamrigCli, fixedCli, UI_LOOKUPS, type CliFiles, type CliRun, type TeamrigCli } from '../hooks/teamrig-cli'
 import { TreeGoals } from '../hooks/tree-goals'
 import type { TaskDetail, TaskRow } from '../types'
 import { withActs } from './acts-front'
@@ -285,7 +285,7 @@ function sourceOf(
   const paths = registerPaths(places.dirs)
   const { team } = places
   const files = new TaskRegisterSource(deps.files, paths, places.settings, team, new TreeGoals(deps.files, paths.goals, team))
-  const documents = new DocumentSource(files, cli, { run })
+  const documents = new DocumentSource(files, fixedCli(cli), { run })
   return { source: documents, held: documents }
 }
 
