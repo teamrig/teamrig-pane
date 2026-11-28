@@ -161,6 +161,48 @@ export async function findTeamrigCli(files: CliFiles, env: CliEnv, lookups: read
   return { kind: 'missing', problem: `${problems.join(', and ')}: install the teamrig plugin` }
 }
 
+/** Where the CLI is now: what a run reads each time it starts, so a CLI found again is the one the next run uses. */
+export type CliSource = { readonly current: () => TeamrigCli }
+
+/** A CLI that never moves: a found one or why none is, for a caller that finds it once. */
+export function fixedCli(cli: TeamrigCli): CliSource {
+  return { current: () => cli }
+}
+
+/**
+ * The CLI a tab runs, found again on `refind` (T5859). An update installs teamrig in a new folder and Claude Code's
+ * plugin list names it, but a tab keeps its loaded pane: found once, every read and follower would run the old CLI until
+ * the tab restarts, and the newer one ends that follower (ENDED) only for the pane to start it again from the same old
+ * path. The events follower asks `refind` at each follow, so the follow after that end, and every read after it, run the
+ * CLI installed now. A find that rejects keeps the CLI it had.
+ */
+export class CliHolder implements CliSource {
+  private found: TeamrigCli
+  private readonly find: () => Promise<TeamrigCli>
+
+  private constructor(find: () => Promise<TeamrigCli>, first: TeamrigCli) {
+    this.find = find
+    this.found = first
+  }
+
+  /** A holder over `find`, with its first find awaited. */
+  static async start(find: () => Promise<TeamrigCli>): Promise<CliHolder> {
+    return new CliHolder(find, await find())
+  }
+
+  readonly current = (): TeamrigCli => this.found
+
+  /** Finds the CLI again and holds what it finds; the one it held when the find rejects. */
+  readonly refind = async (): Promise<TeamrigCli> => {
+    try {
+      this.found = await this.find()
+    } catch {
+      // findTeamrigCli never rejects; a port that does leaves the last CLI found in use rather than none.
+    }
+    return this.found
+  }
+}
+
 /** The command line that runs the CLI with `args`. */
 export function cliArgv(main: string, args: readonly string[]): string[] {
   return ['node', main, ...args]
