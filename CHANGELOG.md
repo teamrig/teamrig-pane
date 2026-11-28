@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.87.0](https://github.com/teamrig/teamrig-pane/compare/teamrig-pane-v0.86.0...teamrig-pane-v0.87.0) (2026-11-28)
+
+
+### Features
+
+* **pane:** a CLI holder that finds the teamrig CLI again on refind (T5859) ([4bdf88c](https://github.com/teamrig/teamrig-pane/commit/4bdf88c1c3808039c9b99ca87911d54ce408f5ca))
+
+
+### Bug Fixes
+
+* **pane:** a follow after an update's end runs the newly installed teamrig CLI (T5859) ([18abe84](https://github.com/teamrig/teamrig-pane/commit/18abe84163fa29114df3e9b3cbd4ce7592a70779))
+
 ## [0.86.0](https://github.com/teamrig/teamrig-pane/compare/teamrig-pane-v0.85.0...teamrig-pane-v0.86.0) (2026-11-26)
 
 
