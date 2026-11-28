@@ -12,7 +12,7 @@
 import type { Meeting, MeetingAnswer, MeetingAsked, MeetingPress, MeetingRun, MeetingStatus, MeetingTo, MeetingsView } from '../types'
 import { messageOf } from './errors'
 import { TICK_MS, type Timer } from './live'
-import { cliArgv, failureLines, linesOf, type CliRun, type TeamrigCli } from './teamrig-cli'
+import { cliArgv, failureLines, linesOf, type CliRun, type CliSource } from './teamrig-cli'
 import type { Clock } from './zone'
 
 /** A list read takes no lock: far under this, unless the machine is swamped. */
@@ -123,7 +123,7 @@ export function runOutcome(id: string, verb: MeetingRun['verb'], run: CliRun): M
 
 /** Reads the meetings again while the view shows, writes them when they changed, and starts one on a press. */
 export class LiveMeetings {
-  private readonly cli: TeamrigCli
+  private readonly cli: CliSource
   private readonly ports: MeetingsPorts
   private timers: Timer[] = []
   private isReading = false
@@ -133,7 +133,7 @@ export class LiveMeetings {
   /** The view last written, as JSON: a read that finds the same list writes nothing. */
   private shown: string | null = null
 
-  constructor(cli: TeamrigCli, ports: MeetingsPorts) {
+  constructor(cli: CliSource, ports: MeetingsPorts) {
     this.cli = cli
     this.ports = ports
   }
@@ -215,7 +215,7 @@ export class LiveMeetings {
   }
 
   private async runCli(id: string, run: MeetingRun): Promise<MeetingAnswer> {
-    const cli = this.cli
+    const cli = this.cli.current()
     if (cli.kind === 'missing') return { id, verb: run.verb, outcome: 'refused', lines: [cli.problem] }
     try {
       const words = meetingWords(id, run, await this.ports.clock())
@@ -227,7 +227,7 @@ export class LiveMeetings {
 
   /** The list the CLI prints now, or why it could not be read. */
   private async read(): Promise<MeetingsView> {
-    const cli = this.cli
+    const cli = this.cli.current()
     if (cli.kind === 'missing') return { kind: 'failed', reason: cli.problem }
     try {
       return listView(await this.ports.run(cliArgv(cli.main, await this.args(['meeting', 'list', '--all', '--json'])), LIST_TIMEOUT_MS))

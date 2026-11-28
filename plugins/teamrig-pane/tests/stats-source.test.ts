@@ -12,7 +12,7 @@ import type { SessionsRead } from '../hooks/sessions-document'
 import { areaListKey } from '../hooks/stats-areas'
 import { statsOf, type StatsRead } from '../hooks/stats-document'
 import { LiveStats, narrowingOf, scopeIn, teamsOf, type StatsPick } from '../hooks/stats-source'
-import type { CliRun, TeamrigCli } from '../hooks/teamrig-cli'
+import { fixedCli, type CliRun, type TeamrigCli } from '../hooks/teamrig-cli'
 import { HOUR, NOW } from './fixtures'
 import { areaCell, printed, refused, statsArea, statsDocument, statsTask } from './served-documents'
 
@@ -70,7 +70,7 @@ function fakeStats(cli: TeamrigCli = CLI) {
   const gate: { held: Promise<void> | null } = { held: null }
   const views: StatsView[] = []
   const writes = { fail: false }
-  const live = new LiveStats(cli, 'shop', {
+  const live = new LiveStats(fixedCli(cli), 'shop', {
     run: async argv => {
       runs.push({ words: argv.slice(argv.indexOf('read') + 1) })
       const answer = answers.length > 1 ? answers.shift() : answers[0]

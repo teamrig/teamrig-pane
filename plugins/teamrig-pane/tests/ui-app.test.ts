@@ -11,7 +11,7 @@ import { OwnerActs } from '../hooks/owner-acts'
 import { INITIAL_STATE } from '../hooks/pane-state'
 import { MemoryStore } from '../hooks/pane-store'
 import type { ViewLives } from '../hooks/steps'
-import type { TeamrigCli } from '../hooks/teamrig-cli'
+import { fixedCli, type TeamrigCli } from '../hooks/teamrig-cli'
 import { runApp, type AppDeps, type Ports } from '../ui/app'
 import type { Key, KeyName } from '../ui/keys'
 import type { Size } from '../ui/paint'
@@ -378,7 +378,7 @@ describe('a Note field', () => {
     (store: WatchedStore): AppDeps['front'] => {
       let held: OwnerActs | null = null
       return focus => {
-        held ??= new OwnerActs(CLI, {
+        held ??= new OwnerActs(fixedCli(CLI), {
           run: argv => {
             runs.push(argv.slice(2))
             return Promise.resolve({ exitCode: 0, stdout: 'T61 noted\n', stderr: '', isStdoutTruncated: false })

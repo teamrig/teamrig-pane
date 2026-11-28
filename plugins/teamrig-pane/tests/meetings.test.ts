@@ -19,7 +19,7 @@ import {
   runOutcome,
   type MeetingsPorts,
 } from '../hooks/meetings'
-import { cliArgv, type CliRun, type TeamrigCli } from '../hooks/teamrig-cli'
+import { cliArgv, fixedCli, type CliRun, type TeamrigCli } from '../hooks/teamrig-cli'
 import { zoneNamed, type Clock } from '../hooks/zone'
 
 const CLI: TeamrigCli = { kind: 'found', main: 'K/teamrig/dist/cli/main.js' }
@@ -161,7 +161,7 @@ describe('meetingWords', () => {
 describe('LiveMeetings', () => {
   test("reads the list with the caller's --session and writes it only when it changed", async () => {
     const ports = portsOf([LISTED])
-    const live = new LiveMeetings(CLI, ports)
+    const live = new LiveMeetings(fixedCli(CLI), ports)
     await live.refresh()
     await live.refresh()
     expect(ports.runs).toEqual([
@@ -173,22 +173,22 @@ describe('LiveMeetings', () => {
 
   test('with no caller known, no --session: the CLI asks its own variable', async () => {
     const ports = { ...portsOf([LISTED]), caller: async () => null }
-    await new LiveMeetings(CLI, ports).refresh()
+    await new LiveMeetings(fixedCli(CLI), ports).refresh()
     expect(ports.runs[0]?.args).toEqual(cliArgv(CLI.main, ['meeting', 'list', '--all', '--json']))
   })
 
   test('no CLI, or a run that does not finish, shows why', async () => {
     const missing = portsOf([])
-    await new LiveMeetings({ kind: 'missing', problem: 'no plugin list' }, missing).refresh()
+    await new LiveMeetings(fixedCli({ kind: 'missing', problem: 'no plugin list' }), missing).refresh()
     expect([missing.runs, missing.views]).toEqual([[], [{ kind: 'failed', reason: 'no plugin list' }]])
     const stuck = portsOf([new Error('timed out')])
-    await new LiveMeetings(CLI, stuck).refresh()
+    await new LiveMeetings(fixedCli(CLI), stuck).refresh()
     expect(stuck.views).toEqual([{ kind: 'failed', reason: 'teamrig meeting list did not finish: timed out' }])
   })
 
   test('polls every TICK_MS, reading only while the view shows', async () => {
     const hidden = portsOf([LISTED], false)
-    const live = new LiveMeetings(CLI, hidden)
+    const live = new LiveMeetings(fixedCli(CLI), hidden)
     const every: number[] = []
     live.startTimers(ms => {
       every.push(ms)
@@ -197,14 +197,14 @@ describe('LiveMeetings', () => {
     await live.poll()
     expect([every, hidden.runs]).toEqual([[TICK_MS], []])
     const shown = portsOf([LISTED])
-    await new LiveMeetings(CLI, shown).poll()
+    await new LiveMeetings(fixedCli(CLI), shown).poll()
     expect(shown.views.length).toBe(1)
   })
 
   test('a run press closes the second line, tells it is running, runs its verb, tells what it answered, then reads the list again', async () => {
     const started = ok('STARTED M3\nTOLD api\n')
     const ports = portsOf([started, LISTED])
-    await new LiveMeetings(CLI, ports).press({ kind: 'run', id: 'M3', run: { verb: 'start' } })
+    await new LiveMeetings(fixedCli(CLI), ports).press({ kind: 'run', id: 'M3', run: { verb: 'start' } })
     expect(ports.asked).toEqual([null])
     expect(ports.runs).toEqual([
       { args: cliArgv(CLI.main, ['meeting', 'start', 'M3', '--session', 'lead']), timeoutMs: RUN_TIMEOUT_MS },
@@ -218,7 +218,7 @@ describe('LiveMeetings', () => {
 
   test('a move press runs meeting move at the time the clock port gives; a drop passes its reason', async () => {
     const ports = portsOf([ok('MOVED M3\n'), LISTED, ok('DROPPED M3\n'), LISTED])
-    const live = new LiveMeetings(CLI, ports)
+    const live = new LiveMeetings(fixedCli(CLI), ports)
     await live.press({ kind: 'run', id: 'M3', run: { verb: 'move', to: { kind: 'in-1h' } } })
     await live.press({ kind: 'run', id: 'M3', run: { verb: 'drop', why: 'Not needed' } })
     expect(ports.runs.filter(run => !run.args.includes('list')).map(run => run.args)).toEqual([
@@ -235,7 +235,7 @@ describe('LiveMeetings', () => {
 
   test('an ask press opens its second line and Back closes it, running nothing', async () => {
     const ports = portsOf([LISTED])
-    const live = new LiveMeetings(CLI, ports)
+    const live = new LiveMeetings(fixedCli(CLI), ports)
     await live.press({ kind: 'ask', id: 'M1', ask: 'end' })
     await live.press({ kind: 'back', id: 'M1' })
     expect([ports.asked, ports.runs, ports.told]).toEqual([[{ id: 'M1', ask: 'end' }, null], [], []])
@@ -243,7 +243,7 @@ describe('LiveMeetings', () => {
 
   test('with no CLI a run press is told as refused with why', async () => {
     const ports = portsOf([])
-    await new LiveMeetings({ kind: 'missing', problem: 'no plugin list' }, ports).press({ kind: 'run', id: 'M1', run: { verb: 'end' } })
+    await new LiveMeetings(fixedCli({ kind: 'missing', problem: 'no plugin list' }), ports).press({ kind: 'run', id: 'M1', run: { verb: 'end' } })
     expect(ports.told[1]).toEqual({ id: 'M1', verb: 'end', outcome: 'refused', lines: ['no plugin list'] })
   })
 
@@ -262,7 +262,7 @@ describe('LiveMeetings', () => {
         return ports.run(args, timeoutMs)
       },
     }
-    const live = new LiveMeetings(CLI, slow)
+    const live = new LiveMeetings(fixedCli(CLI), slow)
     const first = live.run('M3', { verb: 'start' })
     await live.run('M3', { verb: 'drop', why: 'Not needed' })
     open()
@@ -270,7 +270,7 @@ describe('LiveMeetings', () => {
     expect(ports.told.filter(answer => answer.outcome === 'running')).toEqual([{ id: 'M3', verb: 'start', outcome: 'running', lines: [] }])
 
     const stuck = portsOf([new Error('timed out')])
-    await new LiveMeetings(CLI, stuck).run('M4', { verb: 'start' })
+    await new LiveMeetings(fixedCli(CLI), stuck).run('M4', { verb: 'start' })
     expect(stuck.told[1]).toEqual({ id: 'M4', verb: 'start', outcome: 'refused', lines: ['teamrig meeting start M4 did not finish: timed out'] })
   })
 
@@ -297,7 +297,7 @@ describe('LiveMeetings', () => {
         return bounded(answer, timeoutMs, every)
       },
     }
-    const live = new LiveMeetings(CLI, hung)
+    const live = new LiveMeetings(fixedCli(CLI), hung)
     const first = live.refresh()
     await isArmed
     fire()

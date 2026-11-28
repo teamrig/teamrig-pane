@@ -127,7 +127,7 @@ import { OwnerActs } from './owner-acts'
 import { NoteHold } from './note-hold'
 import { SessionActs } from './session-acts'
 import { LiveStats } from './stats-source'
-import { findTeamrigCli } from './teamrig-cli'
+import { CliHolder, findTeamrigCli } from './teamrig-cli'
 import { themeOf } from './theme'
 import { currentPlace } from './nav'
 import { treeOf } from './plan-tree'
@@ -604,15 +604,16 @@ export const register: Register = on => {
     const run = (argv: readonly string[], init: { readonly cwd?: string; readonly timeoutMs: number }): Promise<ProcessResult> =>
       bounded($.process.run(argv, init), init.timeoutMs, (ms, fn) => $.clock.every(ms, fn))
     const home =(await $.env.get('USERPROFILE')) ?? (await $.env.get('HOME'))
-    // The teamrig CLI the Meetings view runs: the installed plugin's, else the teamrig command's on the PATH
-    // (teamrig-cli.ts), found once. Windows may name the PATH `Path`.
-    const cli = await findTeamrigCli(
-      { exists: path => $.fs.exists(path), read: path => $.fs.read(path) },
-      {
-        configDir: await $.env.get('CLAUDE_CONFIG_DIR'),
-        home,
-        path: (await $.env.get('PATH')) ?? (await $.env.get('Path')),
-      },
+    // The teamrig CLI every read, act and follower runs: the installed plugin's, else the teamrig command's on the PATH
+    // (teamrig-cli.ts). The events follower finds it again at each follow, so an update's new install is the one the
+    // follow after its end, and every run after that, use (T5859). Windows may name the PATH `Path`.
+    const cliEnv = {
+      configDir: await $.env.get('CLAUDE_CONFIG_DIR'),
+      home,
+      path: (await $.env.get('PATH')) ?? (await $.env.get('Path')),
+    }
+    const cli = await CliHolder.start(() =>
+      findTeamrigCli({ exists: path => $.fs.exists(path), read: path => $.fs.read(path) }, cliEnv),
     )
     // A path that is not there stamps null; a locked or denied one, or any other failure, throws to
     // the poll (source.ts unlessMissing).
@@ -705,7 +706,7 @@ export const register: Register = on => {
       // The register reads again when teamrig's event stream marks a document it draws, else at the refresher's
       // tick. The follower runs the CLI the reads do, as whoever they last asked as, in the tab's folder.
       const asker = new FollowedAsker(held)
-      const feed = 'missing' in source ? NO_FEED : spawnFeed({ spawn: request => $.process.spawn({ ...request, cwd: e.cwd }), cli: () => Promise.resolve(cli), asker: () => asker.take() })
+      const feed = 'missing' in source ? NO_FEED : spawnFeed({ spawn: request => $.process.spawn({ ...request, cwd: e.cwd }), cli: () => cli.refind(), asker: () => asker.take() })
       const follows = new Refresher({ feed, every: (ms, fn) => $.clock.every(ms, fn) }, [registerSubject({ refresh: stream => started.refresh(stream), documents: held, asker, refollow: () => follows.refollow() })])
       refresher = follows
       pinning = {
@@ -914,7 +915,7 @@ export const register: Register = on => {
       // as the list only offers a team to join and the rest of the setup still shows.
       const setupTeams = new SetupTeams({
         read: async () =>
-          readDocuments(cli, { run: (argv, timeoutMs) => run(argv, { cwd: e.cwd, timeoutMs }) }, SETUP_TEAMS_ASKS, {
+          readDocuments(cli.current(), { run: (argv, timeoutMs) => run(argv, { cwd: e.cwd, timeoutMs }) }, SETUP_TEAMS_ASKS, {
             session: null,
             conversation: await $.session.id(),
           }),

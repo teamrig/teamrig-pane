@@ -23,7 +23,7 @@ import { shownText } from './shown-text'
 import { stepsOf } from './steps-document'
 import { joinedProblems, type FilePoll, type PollInput } from './source'
 import { tasksOf } from './tasks-document'
-import type { TeamrigCli } from './teamrig-cli'
+import type { CliSource } from './teamrig-cli'
 import { isActive } from './view'
 import { zoneNamed } from './zone'
 import type { TimeZone } from './core/read/index'
@@ -98,7 +98,7 @@ export function titledCards(cards: PlanRead['ownerCards'], rows: readonly TaskRo
 
 export class DocumentSource implements SnapshotSource {
   private readonly files: FileSource
-  private readonly cli: TeamrigCli
+  private readonly cli: CliSource
   private readonly ports: ReadPorts
   private readonly tasks = new Held(tasksOf)
   private readonly inbox = new Held(inboxOf)
@@ -123,7 +123,7 @@ export class DocumentSource implements SnapshotSource {
   /** Who the last run that answered asked as; null before one did. */
   private lastAsker: ReadAsker | null = null
 
-  constructor(files: FileSource, cli: TeamrigCli, ports: ReadPorts) {
+  constructor(files: FileSource, cli: CliSource, ports: ReadPorts) {
     this.files = files
     this.cli = cli
     this.ports = ports
@@ -265,7 +265,7 @@ export class DocumentSource implements SnapshotSource {
   private async run(names: readonly PolledName[], session: string | null, input: PollInput, problems: string[]): Promise<boolean> {
     const asks = names.map(name => ({ name, held: this.revisionOf(name, session, input.now) }))
     const asker: ReadAsker = { session, conversation: input.claudeSession }
-    const result = await readDocuments(this.cli, this.ports, asks, asker)
+    const result = await readDocuments(this.cli.current(), this.ports, asks, asker)
     if (result.kind === 'failed') {
       problems.push(result.reason)
       return false

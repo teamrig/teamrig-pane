@@ -12,7 +12,7 @@
 // the CLI only; no model calls.
 import type { SessionAct, SessionAnswer, SessionPress } from '../types'
 import { messageOf } from './errors'
-import { cliArgv, failureLines, linesOf, type CliRun, type TeamrigCli } from './teamrig-cli'
+import { cliArgv, failureLines, linesOf, type CliRun, type CliSource } from './teamrig-cli'
 
 /** A meet reads the register and the host's processes, then posts an inbox line or opens a tab: far under this. */
 export const MEET_TIMEOUT_MS = 60_000
@@ -53,11 +53,11 @@ export function actOutcome(press: SessionPress, run: CliRun, at: number): Sessio
 
 /** Runs a session act on a press, one press at a time. */
 export class SessionActs {
-  private readonly cli: TeamrigCli
+  private readonly cli: CliSource
   private readonly ports: SessionActPorts
   private isRunning = false
 
-  constructor(cli: TeamrigCli, ports: SessionActPorts) {
+  constructor(cli: CliSource, ports: SessionActPorts) {
     this.cli = cli
     this.ports = ports
   }
@@ -80,7 +80,7 @@ export class SessionActs {
   }
 
   private async run(press: SessionPress): Promise<SessionAnswer> {
-    const cli = this.cli
+    const cli = this.cli.current()
     if (cli.kind === 'missing') return { ...press, outcome: 'refused', lines: [cli.problem], at: await this.ports.now() }
     const words = actWords(press)
     try {

@@ -8,7 +8,7 @@
 import type { OwnerAct, OwnerActName, OwnerActPress } from '../types'
 import { messageOf } from './errors'
 import { actKey, noteKey } from './press-keys'
-import { cliArgv, failureLines, linesOf, type CliRun, type TeamrigCli } from './teamrig-cli'
+import { cliArgv, failureLines, linesOf, type CliRun, type CliSource } from './teamrig-cli'
 
 /** An owner act reads the register, writes a line or a pin and posts an inbox line: far under this. */
 export const ACT_TIMEOUT_MS = 60_000
@@ -46,7 +46,7 @@ export function actOutcome(task: string, act: OwnerActName, run: CliRun): OwnerA
 
 /** Runs the owner's Note and Next on a task, one press at a time. */
 export class OwnerActs {
-  private readonly cli: TeamrigCli
+  private readonly cli: CliSource
   private readonly ports: ActPorts
   /** Where the act stands, as last told. */
   private act: OwnerAct | null = null
@@ -56,7 +56,7 @@ export class OwnerActs {
   private draft = ''
   private isRunning = false
 
-  constructor(cli: TeamrigCli, ports: ActPorts) {
+  constructor(cli: CliSource, ports: ActPorts) {
     this.cli = cli
     this.ports = ports
   }
@@ -174,7 +174,7 @@ export class OwnerActs {
 
   /** Runs `teamrig <args>`; with no CLI found, or a run that does not finish, why it gave no answer. */
   private async ran(task: string, act: OwnerActName, args: readonly string[]): Promise<Ran> {
-    const cli = this.cli
+    const cli = this.cli.current()
     if (cli.kind === 'missing') return { kind: 'failed', lines: [cli.problem] }
     try {
       return { kind: 'ran', run: await this.ports.run(cliArgv(cli.main, args), ACT_TIMEOUT_MS) }

@@ -4,7 +4,7 @@
 import { describe, expect, test } from 'claude-code/testing'
 import type { OwnerAct } from '../types'
 import { ACT_TIMEOUT_MS, OwnerActs, actOutcome, nextArgs, noteArgs, type ActPorts } from '../hooks/owner-acts'
-import { cliArgv, type CliRun, type TeamrigCli } from '../hooks/teamrig-cli'
+import { cliArgv, fixedCli, type CliRun, type TeamrigCli } from '../hooks/teamrig-cli'
 
 const CLI: TeamrigCli = { kind: 'found', main: 'K/teamrig/dist/cli/main.js' }
 const NOTED = 'NOTED T12 open, p2, owner api | Ship the import'
@@ -84,7 +84,7 @@ describe('actOutcome', () => {
 describe('OwnerActs: Note', () => {
   test('Note opens a new field on the card, the ring in it; each opening is a new round', async () => {
     const ports = portsOf(answering)
-    const acts = new OwnerActs(CLI, ports)
+    const acts = new OwnerActs(fixedCli(CLI), ports)
     await acts.openNote('T12')
     await acts.openNote('T12')
     expect(ports.told).toEqual([
@@ -97,7 +97,7 @@ describe('OwnerActs: Note', () => {
 
   test('Send runs teamrig owner note with what was typed, trimmed, tells it sends, then what it answered, the ring back on Note', async () => {
     const ports = portsOf(answering)
-    const acts = new OwnerActs(CLI, ports)
+    const acts = new OwnerActs(fixedCli(CLI), ports)
     await acts.openNote('T12')
     acts.typed('  ship it today ')
     await acts.sendNote('T12')
@@ -113,7 +113,7 @@ describe('OwnerActs: Note', () => {
   test('the CLI is run with node and no --session: it finds the team from the tab\'s folder', async () => {
     const argvs: (readonly string[])[] = []
     const ports = portsOf(answering)
-    const acts = new OwnerActs(CLI, {
+    const acts = new OwnerActs(fixedCli(CLI), {
       ...ports,
       run: async (argv, timeoutMs) => {
         argvs.push(argv)
@@ -128,7 +128,7 @@ describe('OwnerActs: Note', () => {
 
   test('Enter in the field sends the text it hands over', async () => {
     const ports = portsOf(answering)
-    const acts = new OwnerActs(CLI, ports)
+    const acts = new OwnerActs(fixedCli(CLI), ports)
     await acts.openNote('T12')
     acts.typed('draft')
     await acts.sendNote('T12', 'final words')
@@ -137,7 +137,7 @@ describe('OwnerActs: Note', () => {
 
   test('an empty Note leaves the field open and runs nothing', async () => {
     const ports = portsOf(answering)
-    const acts = new OwnerActs(CLI, ports)
+    const acts = new OwnerActs(fixedCli(CLI), ports)
     await acts.openNote('T12')
     acts.typed('   ')
     await acts.sendNote('T12')
@@ -147,7 +147,7 @@ describe('OwnerActs: Note', () => {
 
   test('a new field starts empty: the last one\'s typing is not sent', async () => {
     const ports = portsOf(answering)
-    const acts = new OwnerActs(CLI, ports)
+    const acts = new OwnerActs(fixedCli(CLI), ports)
     await acts.openNote('T12')
     acts.typed('first thought')
     await acts.openNote('T12')
@@ -157,7 +157,7 @@ describe('OwnerActs: Note', () => {
 
   test('Send on a card whose field is not open does nothing, its typing kept for the open one', async () => {
     const ports = portsOf(answering)
-    const acts = new OwnerActs(CLI, ports)
+    const acts = new OwnerActs(fixedCli(CLI), ports)
     await acts.sendNote('T12', 'no field')
     await acts.openNote('T12')
     acts.typed('kept')
@@ -168,7 +168,7 @@ describe('OwnerActs: Note', () => {
 
   test('a refused Note is told verbatim', async () => {
     const ports = portsOf(() => failed(2, DONE_REFUSAL))
-    const acts = new OwnerActs(CLI, ports)
+    const acts = new OwnerActs(fixedCli(CLI), ports)
     await acts.openNote('T12')
     await acts.sendNote('T12', 'too late')
     expect(ports.told.at(-1)).toEqual({ kind: 'told', task: 'T12', act: 'note', outcome: 'refused', lines: [DONE_REFUSAL] })
@@ -176,7 +176,7 @@ describe('OwnerActs: Note', () => {
 
   test('Cancel closes the field, the ring back on Note; a cancel on another card does nothing', async () => {
     const ports = portsOf(answering)
-    const acts = new OwnerActs(CLI, ports)
+    const acts = new OwnerActs(fixedCli(CLI), ports)
     await acts.openNote('T12')
     await acts.cancel('T9')
     await acts.cancel('T12')
@@ -188,7 +188,7 @@ describe('OwnerActs: Note', () => {
 describe('OwnerActs: Next', () => {
   test('Next reads the preview into a confirm, the ring on its Cancel first', async () => {
     const ports = portsOf(answering)
-    const acts = new OwnerActs(CLI, ports)
+    const acts = new OwnerActs(fixedCli(CLI), ports)
     await acts.askNext('T12')
     expect(ports.runs).toEqual([nextArgs('T12', true)])
     expect(ports.told).toEqual([
@@ -200,7 +200,7 @@ describe('OwnerActs: Next', () => {
 
   test('the confirm runs teamrig owner next, tells what it answered, the ring back on Next', async () => {
     const ports = portsOf(answering)
-    const acts = new OwnerActs(CLI, ports)
+    const acts = new OwnerActs(fixedCli(CLI), ports)
     await acts.askNext('T12')
     await acts.confirmNext('T12')
     expect(ports.runs).toEqual([nextArgs('T12', true), nextArgs('T12', false)])
@@ -213,7 +213,7 @@ describe('OwnerActs: Next', () => {
 
   test('a refused preview is told verbatim, with no confirm to press', async () => {
     const ports = portsOf(() => failed(2, 'T12 is in progress: Next is for a task not started'))
-    const acts = new OwnerActs(CLI, ports)
+    const acts = new OwnerActs(fixedCli(CLI), ports)
     await acts.askNext('T12')
     await acts.confirmNext('T12')
     expect(ports.runs).toEqual([nextArgs('T12', true)])
@@ -229,7 +229,7 @@ describe('OwnerActs: Next', () => {
 
   test('a confirm with no preview open, or on another card, runs nothing', async () => {
     const ports = portsOf(answering)
-    const acts = new OwnerActs(CLI, ports)
+    const acts = new OwnerActs(fixedCli(CLI), ports)
     await acts.confirmNext('T12')
     await acts.askNext('T12')
     await acts.confirmNext('T9')
@@ -238,7 +238,7 @@ describe('OwnerActs: Next', () => {
 
   test('Cancel closes the confirm, the ring back on Next, and its confirm then runs nothing', async () => {
     const ports = portsOf(answering)
-    const acts = new OwnerActs(CLI, ports)
+    const acts = new OwnerActs(fixedCli(CLI), ports)
     await acts.askNext('T12')
     await acts.cancel('T12')
     await acts.confirmNext('T12')
@@ -249,7 +249,7 @@ describe('OwnerActs: Next', () => {
 
   test('Note on a card with a confirm open closes the confirm', async () => {
     const ports = portsOf(answering)
-    const acts = new OwnerActs(CLI, ports)
+    const acts = new OwnerActs(fixedCli(CLI), ports)
     await acts.askNext('T12')
     await acts.openNote('T12')
     await acts.confirmNext('T12')
@@ -261,7 +261,7 @@ describe('OwnerActs: Next', () => {
 describe('OwnerActs: runs', () => {
   test('with no teamrig CLI found, an act runs nothing and is refused with the problem', async () => {
     const ports = portsOf(answering)
-    const acts = new OwnerActs({ kind: 'missing', problem: 'teamrig is not installed' }, ports)
+    const acts = new OwnerActs(fixedCli({ kind: 'missing', problem: 'teamrig is not installed' }), ports)
     await acts.askNext('T12')
     expect(ports.runs).toEqual([])
     expect(ports.told.at(-1)).toEqual({ kind: 'told', task: 'T12', act: 'next', outcome: 'refused', lines: ['teamrig is not installed'] })
@@ -269,7 +269,7 @@ describe('OwnerActs: runs', () => {
 
   test('a run that does not finish is told as refused', async () => {
     const ports = portsOf(() => new Error('timed out'))
-    const acts = new OwnerActs(CLI, ports)
+    const acts = new OwnerActs(fixedCli(CLI), ports)
     await acts.openNote('T12')
     await acts.sendNote('T12', 'hello')
     expect(ports.told.at(-1)).toEqual({
@@ -288,7 +288,7 @@ describe('OwnerActs: runs', () => {
       open = resolve
     })
     const ports = portsOf(answering)
-    const acts = new OwnerActs(CLI, {
+    const acts = new OwnerActs(fixedCli(CLI), {
       ...ports,
       run: async (argv, timeoutMs) => {
         await gate
@@ -309,7 +309,7 @@ describe('OwnerActs: runs', () => {
   test('a tell that fails runs nothing and leaves the acts free for the next press', async () => {
     const ports = portsOf(answering)
     let tells = 0
-    const acts = new OwnerActs(CLI, {
+    const acts = new OwnerActs(fixedCli(CLI), {
       ...ports,
       tell: async () => {
         tells += 1
@@ -324,7 +324,7 @@ describe('OwnerActs: runs', () => {
 
   test('each press of an act goes to its step: Note opens the field, Send sends it, Next previews, Confirm runs, Cancel closes', async () => {
     const ports = portsOf(answering)
-    const acts = new OwnerActs(CLI, ports)
+    const acts = new OwnerActs(fixedCli(CLI), ports)
     await acts.press('note', 'T12')
     acts.typed('ship it')
     await acts.press('send', 'T12')
@@ -338,7 +338,7 @@ describe('OwnerActs: runs', () => {
 
   test('a field whose opening could not be told takes no Send', async () => {
     const ports = portsOf(answering)
-    const acts = new OwnerActs(CLI, {
+    const acts = new OwnerActs(fixedCli(CLI), {
       ...ports,
       tell: async () => {
         throw new Error('store closed')
