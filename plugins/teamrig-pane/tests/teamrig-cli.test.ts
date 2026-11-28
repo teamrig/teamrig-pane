@@ -2,7 +2,7 @@
 // the home's .claude; the first teamrig install whose dist/cli/main.js is there; else the one beside the teamrig command
 // on the PATH (issue #119); why neither is, as one line.
 import { describe, expect, test } from 'claude-code/testing'
-import { cliArgv, findTeamrigCli, UI_LOOKUPS, pathFolders, pluginListPath, teamrigInstalls, type CliFiles } from '../hooks/teamrig-cli'
+import { CliHolder, cliArgv, findTeamrigCli, fixedCli, UI_LOOKUPS, pathFolders, pluginListPath, teamrigInstalls, type CliFiles } from '../hooks/teamrig-cli'
 
 const HOME = 'D:\\profile'
 const LIST = 'D:/profile/.claude/plugins/installed_plugins.json'
@@ -184,6 +184,46 @@ describe('findTeamrigCli', () => {
       kind: 'missing',
       problem: `no plugin list at ${LIST}, and cannot look on the PATH: EBUSY: D:/windows/teamrig: install the teamrig plugin`,
     })
+  })
+})
+
+describe('CliHolder', () => {
+  const env = { configDir: undefined, home: HOME, path: undefined }
+  const OLD_MAIN = 'D:/profile/.claude/plugins/cache/teamrig/teamrig/0.1.0/dist/cli/main.js'
+
+  test('an update named in the plugin list after the first find is held only once it is found again (T5859)', async () => {
+    // The old install stays on disk after the update, so a CLI found once would keep running it.
+    const paths: Record<string, string> = { [LIST]: listOf({ 'teamrig@teamrig': [{ installPath: OLD }] }), [OLD_MAIN]: '', [NEW_MAIN]: '' }
+    const holder = await CliHolder.start(() => findTeamrigCli(filesOf(paths), env))
+    expect(holder.current()).toEqual({ kind: 'found', main: OLD_MAIN })
+    paths[LIST] = listOf({ 'teamrig@teamrig': [{ installPath: NEW }] })
+    expect(holder.current()).toEqual({ kind: 'found', main: OLD_MAIN })
+    expect(await holder.refind()).toEqual({ kind: 'found', main: NEW_MAIN })
+    expect(holder.current()).toEqual({ kind: 'found', main: NEW_MAIN })
+  })
+
+  test('a CLI missing at the start is held once a later find has it', async () => {
+    const paths: Record<string, string> = {}
+    const holder = await CliHolder.start(() => findTeamrigCli(filesOf(paths), env))
+    expect(holder.current().kind).toBe('missing')
+    paths[LIST] = listOf({ 'teamrig@teamrig': [{ installPath: NEW }] })
+    paths[NEW_MAIN] = ''
+    expect(await holder.refind()).toEqual({ kind: 'found', main: NEW_MAIN })
+  })
+
+  test('a find that rejects keeps the CLI it held', async () => {
+    let finds = 0
+    const holder = await CliHolder.start(async () => {
+      finds += 1
+      if (finds > 1) throw new Error('EBUSY')
+      return { kind: 'found', main: OLD_MAIN }
+    })
+    expect(await holder.refind()).toEqual({ kind: 'found', main: OLD_MAIN })
+    expect(holder.current()).toEqual({ kind: 'found', main: OLD_MAIN })
+  })
+
+  test('a fixed CLI answers the one it was given', () => {
+    expect(fixedCli({ kind: 'found', main: NEW_MAIN }).current()).toEqual({ kind: 'found', main: NEW_MAIN })
   })
 })
 
